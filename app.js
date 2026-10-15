@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const C = window.Core;
-  const VERSION = "1.0.1";
+  const VERSION = "1.1.0";
   const $ = (id) => document.getElementById(id);
   const S = C.fmtSilver;
   const SLOW_DAYS = 7;
@@ -26,6 +26,8 @@
     mode: "cat", cat: "ore", qty: 1000, city: C.AUTO_CITY, buy: C.SAME_CITY, sell: C.AUTO_MARKET,
     sellMode: "order", buyMode: "instant", daily: 0, fce: 0, minVol: 1, tiers: [4, 5, 6, 7, 8], enchs: [0, 1, 2, 3, 4],
     sort: "qty", focus: false, chain: false, view: "refine",
+    cItem: null, cGroup: "Tränke", cQty: 100, cCity: C.AUTO_CITY, cBuy: C.SAME_CITY, cBuyMode: "instant",
+    cSell: C.AUTO_MARKET, cSellMode: "order", cFocus: false, cDaily: 0, cStation: 0,
   }, storage.get("ui", {}));
   const saveUi = () => storage.set("ui", ui);
   let shop = storage.get("shop", []);
@@ -55,11 +57,14 @@
     if (m >= 10) return "good";
     return "ok";
   }
-  function setStatus(text, err) { const s = $("status"); s.textContent = text || ""; s.classList.toggle("err", !!err); }
+  function setStatus(text, err) {
+    document.querySelectorAll(".status").forEach((s) => { s.textContent = text || ""; s.classList.toggle("err", !!err); });
+  }
   function progress(n, total) {
-    const p = $("progress");
-    p.classList.toggle("on", total > 0 && n < total);
-    p.firstElementChild.style.width = total ? (100 * n / total) + "%" : "0";
+    document.querySelectorAll(".progress").forEach((p) => {
+      p.classList.toggle("on", total > 0 && n < total);
+      p.firstElementChild.style.width = total ? (100 * n / total) + "%" : "0";
+    });
   }
   const qty = () => Math.max(0, Math.floor(Number(ui.qty) || 0));
 
@@ -67,7 +72,7 @@
   async function runJobs(jobs, done) {
     if (busy) { setStatus("Es läuft bereits ein Abruf …"); return; }
     busy = true; abort = new AbortController();
-    $("load-btn").disabled = true; $("shop-reload").disabled = true;
+    $("load-btn").disabled = true; $("shop-reload").disabled = true; $("c-load").disabled = true;
     let errors = 0;
     try {
       for (let k = 0; k < jobs.length; k++) {
@@ -88,7 +93,7 @@
       setStatus("Fehler beim Abruf: " + (e.message || e), true);
     } finally {
       busy = false; progress(0, 0);
-      $("load-btn").disabled = false; $("shop-reload").disabled = false;
+      $("load-btn").disabled = false; $("shop-reload").disabled = false; $("c-load").disabled = false;
       if (done) await done();
     }
   }
@@ -274,6 +279,8 @@
     compute();
     renderChips(); renderOpts(); renderTiles(); renderList();
     if ($("calc").classList.contains("on")) renderCalc();
+    if (ui.view === "craft") renderCraft();
+    if (ui.view === "shop") renderShop();
     $("premium-badge").textContent = settings.premium ? "★ Premium · 4 %" : "ohne Premium · 8 %";
   }
 
@@ -419,6 +426,198 @@
     }
   }
 
+  // ------------------------------------------------------------ Crafting-Rechner
+  const GROUPS = ["Tränke", "Essen", "Waffen", "Rüstung", "Nebenhand", "Taschen & Umhänge", "Sammlerausrüstung", "Werkzeuge", "Refining"];
+
+  function cCities() {
+    const rec = gd.recipes[ui.cItem];
+    let city = ui.cCity;
+    if (city === C.AUTO_CITY) city = C.bonusCityFor(settings, rec.cat) || (ui.cBuy !== C.SAME_CITY ? ui.cBuy : "Lymhurst");
+    const buy = ui.cBuy === C.SAME_CITY ? city : ui.cBuy;
+    const sellLocs = ui.cSell === C.AUTO_MARKET ? C.MARKETS : [ui.cSell === C.SAME_CITY ? city : ui.cSell];
+    return { city, buy, sellLocs };
+  }
+
+  /** Alles für den gewählten Craft ausrechnen. */
+  function craftCalc() {
+    const rec = gd.recipes[ui.cItem];
+    if (!rec) return null;
+    const pieces = Math.max(1, Math.floor(Number(ui.cQty) || 1));
+    const crafts = C.craftsFor(rec, pieces);
+    const { city, buy, sellLocs } = cCities();
+    const bonus = C.productionBonus(settings, city, rec.cat, ui.cFocus, Number(ui.cDaily) || 0);
+    const rrr = C.returnRate(bonus);
+    const kind = ui.cBuyMode === "instant" ? "sell" : "buy";
+    const plan = C.buyPlan(rec, crafts, rrr);
+    const prices = {};
+    let buyCost = 0, buyOk = true;
+    for (const pl of plan) {
+      const [p, src, ts] = store.get(pl.id, buy, kind);
+      pl.price = p !== null && src !== "alt" || src === "manuell" ? C.buyUnitCost(settings, p, ui.cBuyMode) : null;
+      pl.src = src; pl.ts = ts; pl.raw = p;
+      prices[pl.id] = pl.price;
+      pl.cost = pl.price !== null ? pl.buy * pl.price : null;
+      if (pl.cost === null) buyOk = false; else buyCost += pl.cost;
+    }
+    const best = C.bestSale(store, settings, ui.cItem, sellLocs, ui.cSellMode);
+    const mode = best ? best.mode : (sellLocs[0] === C.BLACK_MARKET ? "instant" : ui.cSellMode);
+    const res = C.calcCraft(rec, crafts, rrr, prices, best ? best.price : null, C.sellFee(settings, mode),
+      Number(ui.cStation) || 0, ui.cFocus);
+    return { rec, pieces, crafts, city, buy, sellLocs, bonus, rrr, plan, buyCost: buyOk ? buyCost : null, best, mode, res,
+      sellLoc: best ? best.loc : sellLocs[0] };
+  }
+
+  function renderCraftSearch() {
+    const g = $("c-groups");
+    g.innerHTML = "";
+    ["Alle"].concat(GROUPS).forEach((name) => g.append(el("button", {
+      class: "chip" + ((ui.cGroup || "Tränke") === name ? " on" : ""),
+      on: { click: () => { ui.cGroup = name; saveUi(); renderCraftSearch(); } },
+    }, name)));
+    const grp = (ui.cGroup || "Tränke") === "Alle" ? null : (ui.cGroup || "Tränke");
+    const ids = gd.search($("c-search").value, grp).slice(0, 60);
+    const box = $("c-results");
+    box.innerHTML = "";
+    if (!ids.length) box.append(el("div", { class: "empty" }, "Nichts gefunden"));
+    ids.forEach((id) => box.append(el("div", {
+      class: "shop-item", style: "cursor:pointer" + (id === ui.cItem ? ";color:var(--gold)" : ""),
+      on: { click: () => selectCraft(id) },
+    }, el("div", { class: "t", style: "font-weight:600" }, gd.label(id)),
+      el("div", { class: "small muted" }, `${gd.recipes[id].amount} Stk/Craft`))));
+  }
+
+  function selectCraft(id) {
+    ui.cItem = id; saveUi();
+    renderCraftSearch(); renderCraft();
+    $("c-calc").scrollIntoView({ behavior: "smooth", block: "start" });
+    const r = gd.recipes[id];
+    const { buy } = cCities();
+    if (r.res.some((x) => store.get(x[0], buy, "sell")[0] === null)) loadCraft();
+  }
+
+  function loadCraft() {
+    const k = craftCalc(); if (!k) return;
+    runJobs([[k.rec.res.map((x) => x[0]), [k.buy]], [[ui.cItem], k.sellLocs], [[ui.cItem], k.sellLocs, "history"]], () => render());
+  }
+
+  function cPriceKey(which, k) {
+    if (which === "prod") return [ui.cItem, k.sellLoc, k.mode === "instant" ? "buy" : "sell"];
+    return [which, k.buy, ui.cBuyMode === "instant" ? "sell" : "buy"];
+  }
+
+  function editCraftPrice(which) {
+    const k = craftCalc(); if (!k) return;
+    const [item, loc, kind] = cPriceKey(which, k);
+    const [cur] = store.get(item, loc, kind);
+    const e = store.live[item + "|" + loc] || {};
+    const liveTxt = e[kind] ? `Live: ${S(e[kind])} (${C.fmtAge(e[kind + "_ts"])} alt)` : "Live: keiner";
+    const v = window.prompt(`${gd.label(item)} – ${loc}\n${kind === "buy" ? "Kaufgebot" : "Verkaufsangebot"} · ${liveTxt}\n\nPreis in Silber (leer = Live-Preis):`,
+      cur === null ? "" : String(Math.round(cur)));
+    if (v === null) return;
+    const clean = v.replace(/[.\s]/g, "");
+    if (clean === "") store.setManual(item, loc, kind, null);
+    else if (/^\d+$/.test(clean)) store.setManual(item, loc, kind, Number(clean));
+    else { alert("Bitte eine ganze Zahl eingeben."); return; }
+    renderCraft();
+  }
+
+  function resetCraftPrices(list) {
+    const k = craftCalc(); if (!k) return;
+    let n = 0;
+    for (const which of list) {
+      const [item, loc, kind] = cPriceKey(which, k);
+      if (store.isManual(item, loc, kind)) { store.setManual(item, loc, kind, null); n++; }
+    }
+    setStatus(n ? `↺ ${n} manuelle(r) Preis(e) entfernt` : "Keine manuellen Preise vorhanden");
+    renderCraft();
+  }
+
+  function renderCraftOpts() {
+    const fill = (sel, values, cur) => { sel.innerHTML = ""; values.forEach((v) => sel.append(el("option", { value: v, textContent: v, selected: v === cur }))); };
+    fill($("c-city"), [C.AUTO_CITY].concat(C.CITIES), ui.cCity);
+    fill($("c-buy"), [C.SAME_CITY].concat(C.CITIES), ui.cBuy);
+    fill($("c-sell"), [C.AUTO_MARKET, C.SAME_CITY].concat(C.MARKETS), ui.cSell);
+    $("c-buy").options[0].textContent = "Wie Crafting-Stadt";
+    $("c-sell").options[1].textContent = "Wie Crafting-Stadt";
+    $("c-sellmode").value = ui.cSellMode; $("c-buymode").value = ui.cBuyMode;
+    $("c-daily").value = ui.cDaily; $("c-station").value = ui.cStation; $("c-focus").checked = ui.cFocus;
+  }
+
+  function renderCraft() {
+    if (!gd || !ui.cItem || !gd.recipes[ui.cItem]) { $("c-calc").style.display = "none"; return; }
+    $("c-calc").style.display = "";
+    const k = craftCalc();
+    const rec = k.rec;
+    renderCraftOpts();
+    $("c-title").textContent = gd.label(ui.cItem);
+    const bc = C.bonusCityFor(settings, rec.cat);
+    $("c-hint").textContent = `${rec.amount} Stück pro Craft · ${bc ? "Bonusstadt: " + bc : "keine Bonusstadt"}`;
+    if (document.activeElement !== $("c-qty")) $("c-qty").value = ui.cQty;
+    $("c-crafts-info").textContent = `= ${S(k.crafts)} Crafts à ${rec.amount} Stück` +
+      (k.crafts * rec.amount !== k.pieces ? ` → ergibt ${S(k.crafts * rec.amount)} Stück` : "");
+    $("c-opts-sum").textContent = `${k.city}${k.buy !== k.city ? " · Kauf " + k.buy : ""} · ${ui.cSell === C.AUTO_MARKET ? "bester Markt" : k.sellLocs[0]}${ui.cFocus ? " · Fokus" : ""}`;
+
+    // Materialien
+    const box = $("c-mats");
+    box.innerHTML = "";
+    for (const pl of k.plan) {
+      const rest = !pl.ret ? "keine Rückgabe" : `Rest ~${Math.round(pl.rest)}`;
+      box.append(el("div", { class: "price" },
+        el("div", { class: "t" },
+          el("div", { class: "n" }, gd.label(pl.id)),
+          el("div", { class: "small muted" }, `${pl.cnt} pro Craft · ohne Rückgabe ${S(pl.full)} · ${rest}`),
+          el("div", { class: "small" }, `Stückpreis ${S(pl.price)} `, el("span", { class: "src " + (pl.src || "fehlt") },
+            `${pl.src || "fehlt"}${pl.ts ? " · " + C.fmtAge(pl.ts) : ""}`), `  ·  Einkauf ${S(pl.cost)}`)),
+        el("div", { style: "text-align:right" }, el("div", { class: "small muted" }, "KAUFEN"),
+          el("div", { class: "v num", style: "font-size:20px;color:var(--gold-lt)" }, S(pl.buy))),
+        el("button", { class: "icon-btn", on: { click: () => editCraftPrice(pl.id) } }, "✎"),
+        el("button", { class: "icon-btn", on: { click: () => resetCraftPrices([pl.id]) } }, "↺"),
+      ));
+    }
+    // Produkt
+    let [pp, psrc, pts] = store.get(ui.cItem, k.sellLoc, k.mode === "instant" ? "buy" : "sell");
+    if (k.best && psrc !== "manuell" && k.best.price !== pp) { pp = k.best.price; psrc = "Ø-Preis"; pts = null; }
+    const vol = k.best ? k.best.info.per_day : null;
+    box.append(el("div", { class: "price", style: "border-top:2px solid var(--gold-dk)" },
+      el("div", { class: "t" },
+        el("div", { class: "n" }, "➜ Verkauf: " + gd.label(ui.cItem)),
+        el("div", { class: "small muted" }, `${k.sellLoc}${k.mode === "instant" ? " · Sofortverkauf" : ""} · Verkäufe/Tag ${vol === null ? "?" : C.fmtNum(vol, vol < 10 ? 1 : 0)}`),
+        el("div", { class: "small" }, el("span", { class: "src " + (psrc || "fehlt") }, `${psrc || "fehlt"}${pts ? " · " + C.fmtAge(pts) : ""}`))),
+      el("div", { style: "text-align:right" }, el("div", { class: "small muted" }, "Stückpreis"),
+        el("div", { class: "v num", style: "font-size:20px" }, S(pp))),
+      el("button", { class: "icon-btn", on: { click: () => editCraftPrice("prod") } }, "✎"),
+      el("button", { class: "icon-btn", on: { click: () => resetCraftPrices(["prod"]) } }, "↺"),
+    ));
+
+    // Ergebnis
+    const r = k.res, ok = r.complete;
+    const rowsT = [
+      ["Herstellen", `${S(k.crafts * rec.amount)} Stück (${S(k.crafts)} Crafts)`, true],
+      ["Einkauf (Silber)", S(k.buyCost), true, "gold"],
+      ["Rücklaufquote", `${C.fmtNum(k.rrr * 100)} % (Bonus ${Math.round(k.bonus)})`],
+      ["Materialwert gesamt", r.missing.length ? "–" : S(r.gross)],
+      ["– davon Rückgabe", r.missing.length ? "–" : S(r.returned), false, "pos"],
+      ["+ Stationsgebühr", S(r.station)],
+      ["Verkaufswert", k.best ? S(r.revenue_gross) : "–"],
+      ["– Steuer/Gebühr", k.best ? S(r.fee) : "–", false, "neg"],
+      ["= Gewinn", ok ? S(r.profit) : "–", true, ok ? (r.profit > 0 ? "pos" : "neg") : ""],
+      ["Gewinn pro Stück", ok ? S(r.profit_each) : "–", false, ok ? (r.profit > 0 ? "pos" : "neg") : ""],
+      ["Marge", ok ? C.fmtNum(r.margin) + " %" : "–", false, ok ? (r.profit > 0 ? "pos" : "neg") : ""],
+      ["Fokus nötig", ui.cFocus ? S(r.focus) : "–"],
+      ["Silber pro Fokus", ui.cFocus && ok && r.focus ? C.fmtNum(r.profit / r.focus) : "–"],
+    ];
+    const tbl = $("c-table");
+    tbl.innerHTML = "";
+    rowsT.forEach(([l, v, key, cls]) => tbl.append(el("tr", { class: key ? "key" : "" }, el("td", {}, l), el("td", { class: cls || "" }, v))));
+    const b = $("c-banner");
+    if (!ok) { b.className = "banner"; b.textContent = "Preise fehlen – „Live-Preise laden“ oder mit ✎ eintragen"; }
+    else {
+      b.className = "banner " + marginTag(r.margin, r.profit);
+      b.innerHTML = `<span class="big num">${r.profit > 0 ? "▲" : "▼"} ${S(r.profit)} Silber</span>` +
+        `${S(k.crafts * rec.amount)} × ${gd.name(ui.cItem)} · Marge ${C.fmtNum(r.margin)} % · Einkauf ${S(k.buyCost)}`;
+    }
+  }
+
   // ------------------------------------------------------------ Einkaufsliste
   function shopEntry(r, n) {
     return { id: r.id, crafts: n, city: r.city, buy_city: r.buy_city, buy_mode: ui.buyMode, focus: ui.focus,
@@ -434,50 +633,58 @@
     setStatus(`🛒 ${entries.length} Eintrag/Einträge zur Einkaufsliste hinzugefügt`);
   }
 
-  function shopRow(e) {
+  /** Ein Eintrag der Einkaufsliste – funktioniert für jedes Rezept (Refining, Tränke, Gear …). */
+  function shopCalc(e) {
     const rec = gd.recipes[e.id];
-    return C.refineTable(gd, store, settings, rec.cat, {
-      tiers: [rec.tier], enchs: [rec.ench], city: e.city, buyCity: e.buy_city, buyMode: e.buy_mode,
-      sellLoc: e.sell_loc, sellMode: e.sell_mode, daily: e.daily, fce: Number(ui.fce) || 0, chain: false,
-    }).find((x) => x.id === e.id);
+    const rrr = C.returnRate(C.productionBonus(settings, e.city, rec.cat, e.focus, e.daily || 0));
+    const kind = e.buy_mode === "instant" ? "sell" : "buy";
+    const plan = C.buyPlan(rec, e.crafts, rrr);
+    const prices = {};
+    for (const pl of plan) {
+      const [p, src] = store.get(pl.id, e.buy_city, kind);
+      pl.price = (p !== null && src !== "alt") || src === "manuell" ? C.buyUnitCost(settings, p, e.buy_mode) : null;
+      prices[pl.id] = pl.price;
+    }
+    const best = C.bestSale(store, settings, e.id, [e.sell_loc], e.sell_mode);
+    const res = C.calcCraft(rec, e.crafts, rrr, prices, best ? best.price : null,
+      C.sellFee(settings, best ? best.mode : e.sell_mode), e.station || 0, e.focus);
+    return { rec, plan, profit: res.complete ? res.profit : null };
   }
 
   function renderShop() {
     const ent = $("shop-entries"), mats = $("shop-mats");
     ent.innerHTML = ""; mats.innerHTML = "";
-    let totalCost = 0, totalProfit = 0, complete = true;
+    let totalCost = 0, totalProfit = 0, complete = true, pieces = 0;
     const agg = {};
     shop.forEach((e, i) => {
       if (!gd.recipes[e.id]) return;
-      const r = shopRow(e);
-      const nd = r ? C.needs(r, e.crafts, e.focus) : null;
-      if (nd && nd.profit !== null) totalProfit += nd.profit; else complete = false;
-      if (r) {
-        const add = (id, n, price) => {
-          const k = id + "|" + e.buy_city;
-          const a = (agg[k] = agg[k] || { id, city: e.buy_city, n: 0, cost: 0, missing: false });
-          a.n += n;
-          if (price === null || price === undefined) a.missing = true; else a.cost += n * price;
-        };
-        add(r.raw, nd.raw, r.raw_price);
-        if (r.prev) add(r.prev, nd.prev, r[e.focus ? "prev_f" : "prev_nf"]);
+      const k = shopCalc(e);
+      pieces += e.crafts * k.rec.amount;
+      if (k.profit !== null) totalProfit += k.profit; else complete = false;
+      for (const pl of k.plan) {
+        const key = pl.id + "|" + e.buy_city;
+        const a = (agg[key] = agg[key] || { id: pl.id, city: e.buy_city, n: 0, cost: 0, missing: false });
+        a.n += pl.buy;
+        if (pl.price === null) a.missing = true; else a.cost += pl.buy * pl.price;
       }
+      const amt = k.rec.amount;
       ent.append(el("div", { class: "shop-item" },
         el("div", { class: "t" },
-          el("div", { style: "font-weight:700" }, `${S(e.crafts)} × ${gd.label(e.id)}`),
-          el("div", { class: "small muted" }, `${e.city}${e.buy_city !== e.city ? " · Kauf " + e.buy_city : ""} → ${e.sell_loc}${e.focus ? " · ✦ Fokus" : ""}`)),
-        el("div", { class: "num " + (nd && nd.profit !== null ? (nd.profit > 0 ? "pos" : "neg") : "muted") },
-          nd && nd.profit !== null ? S(nd.profit) : "Preise fehlen"),
+          el("div", { style: "font-weight:700" }, `${S(e.crafts * amt)} × ${gd.label(e.id)}`),
+          el("div", { class: "small muted" }, (amt > 1 ? `${S(e.crafts)} Crafts · ` : "") +
+            `${e.city}${e.buy_city !== e.city ? " · Kauf " + e.buy_city : ""} → ${e.sell_loc}${e.focus ? " · ✦ Fokus" : ""}`)),
+        el("div", { class: "num " + (k.profit !== null ? (k.profit > 0 ? "pos" : "neg") : "muted") },
+          k.profit !== null ? S(k.profit) : "Preise fehlen"),
         el("button", { class: "icon-btn", on: { click: () => {
-          const v = window.prompt("Anzahl (0 = entfernen)", String(e.crafts));
+          const v = window.prompt(`Stückzahl (0 = entfernen)${amt > 1 ? " – " + amt + " Stück pro Craft" : ""}`, String(e.crafts * amt));
           if (v === null) return;
           const n = Math.floor(Number(v.replace(/[.\s]/g, "")) || 0);
-          if (n <= 0) shop.splice(i, 1); else e.crafts = n;
+          if (n <= 0) shop.splice(i, 1); else e.crafts = C.craftsFor(k.rec, n);
           saveShop(); renderShop();
         } } }, "✎"),
       ));
     });
-    if (!shop.length) ent.append(el("div", { class: "empty" }, "Noch leer. Im Refining-Rechner „Zur Einkaufsliste“ tippen."));
+    if (!shop.length) ent.append(el("div", { class: "empty" }, "Noch leer. Im Refining- oder Crafting-Rechner „Zur Einkaufsliste“ tippen."));
     const list = Object.values(agg).sort((a, b) => a.city.localeCompare(b.city) || b.cost - a.cost);
     for (const a of list) {
       if (a.missing) complete = false; else totalCost += a.cost;
@@ -489,7 +696,7 @@
     const t = $("shop-tiles");
     t.innerHTML = "";
     t.append(
-      tile(S(shop.reduce((x, e) => x + e.crafts, 0)), "Stück in der Liste"),
+      tile(S(pieces), "Stück in der Liste"),
       tile(S(totalCost) + (complete ? "" : " *"), "Einkauf gesamt"),
       tile(shop.length ? S(totalProfit) : "–", "erwarteter Gewinn", totalProfit > 0 ? "good" : shop.length ? "bad" : ""),
       tile(String(list.length), "Materialien"),
@@ -537,6 +744,7 @@
     document.querySelectorAll(".view").forEach((v) => v.classList.toggle("active", v.id === "view-" + view));
     document.querySelectorAll("nav.tabs button").forEach((b) => b.classList.toggle("on", b.dataset.view === view));
     if (view === "shop") renderShop();
+    if (view === "craft") { renderCraftSearch(); renderCraft(); }
     if (view === "settings") renderSettings();
     window.scrollTo(0, 0);
   }
@@ -572,6 +780,29 @@
       const r = calcRow(); if (!r) return;
       const n = calcAmount(r, ui.focus);
       if (n > 0) { addToShop([shopEntry(r, n)]); $("calc-shop").textContent = "✔ Zur Einkaufsliste hinzugefügt"; setTimeout(() => { $("calc-shop").textContent = "🛒 Diese Menge zur Einkaufsliste"; }, 1800); }
+    });
+
+    // Crafting
+    let st = null;
+    $("c-search").addEventListener("input", () => { clearTimeout(st); st = setTimeout(renderCraftSearch, 150); });
+    const cq = $("c-qty");
+    let qt = null;
+    cq.addEventListener("input", () => { ui.cQty = cq.value; saveUi(); clearTimeout(qt); qt = setTimeout(renderCraft, 200); });
+    [10, 50, 100, 500, 1000].forEach((v) => $("c-quick").append(el("button", { on: { click: () => { cq.value = v; ui.cQty = v; saveUi(); renderCraft(); } } }, S(v))));
+    $("c-load").addEventListener("click", loadCraft);
+    const cbind = (id, key, num) => $(id).addEventListener("change", (e) => {
+      ui[key] = e.target.type === "checkbox" ? e.target.checked : num ? Number(e.target.value) || 0 : e.target.value;
+      saveUi(); renderCraft();
+    });
+    cbind("c-city", "cCity"); cbind("c-buy", "cBuy"); cbind("c-sell", "cSell"); cbind("c-sellmode", "cSellMode");
+    cbind("c-buymode", "cBuyMode"); cbind("c-daily", "cDaily", true); cbind("c-station", "cStation", true); cbind("c-focus", "cFocus");
+    $("c-all-live").addEventListener("click", () => { const k = craftCalc(); if (k) resetCraftPrices(k.plan.map((p) => p.id).concat(["prod"])); });
+    $("c-shop").addEventListener("click", () => {
+      const k = craftCalc(); if (!k) return;
+      addToShop([{ id: ui.cItem, crafts: k.crafts, city: k.city, buy_city: k.buy, buy_mode: ui.cBuyMode, focus: ui.cFocus,
+        daily: Number(ui.cDaily) || 0, sell_loc: k.sellLoc, sell_mode: k.mode, station: Number(ui.cStation) || 0 }]);
+      $("c-shop").textContent = "✔ Zur Einkaufsliste hinzugefügt";
+      setTimeout(() => { $("c-shop").textContent = "🛒 Zur Einkaufsliste"; }, 1800);
     });
 
     $("shop-reload").addEventListener("click", () => {
@@ -630,7 +861,7 @@
   async function start() {
     wire();
     try {
-      const res = await fetch("data/refining.json");
+      const res = await fetch("data/recipes_all.json");
       gd = new C.GameData(await res.json());
     } catch (e) {
       setStatus("Rezeptdaten konnten nicht geladen werden: " + e.message, true);

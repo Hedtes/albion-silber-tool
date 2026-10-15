@@ -72,6 +72,61 @@
     <div class="list" id="list"></div>
   </section>
 
+  <!-- ===================================================== Crafting -->
+  <section class="view" id="view-craft">
+    <div class="card">
+      <div class="row">
+        <input id="c-search" type="search" placeholder="Item suchen, z. B. „lebenstrank t4“" style="flex:1;min-width:0;padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--panel2);font-size:16px">
+      </div>
+      <div class="chips" id="c-groups" style="margin-top:10px"></div>
+      <div id="c-results" style="margin-top:8px;max-height:260px;overflow-y:auto"></div>
+    </div>
+
+    <div id="c-calc" style="display:none">
+      <div class="card qty">
+        <div style="font-weight:800;font-size:17px" id="c-title"></div>
+        <div class="small" style="color:var(--gold-lt)" id="c-hint"></div>
+        <label class="t" for="c-qty" style="display:block;margin-top:10px">HERSTELLEN · Stück</label>
+        <input class="big num" id="c-qty" type="number" inputmode="numeric" min="1" step="1" value="100">
+        <div class="small" style="color:var(--gold-lt);margin-top:6px" id="c-crafts-info"></div>
+        <div class="quick" id="c-quick"></div>
+        <button class="btn primary block" id="c-load" style="margin-top:12px">⟳  Live-Preise laden</button>
+        <div class="progress"><div></div></div>
+        <div class="status"></div>
+      </div>
+
+      <div class="card">
+        <details class="opts">
+          <summary>Städte, Fokus &amp; Gebühren <span class="muted small" id="c-opts-sum"></span></summary>
+          <div class="grid">
+            <div class="field"><label>Crafting-Stadt</label><select id="c-city"></select></div>
+            <div class="field"><label>Einkauf in</label><select id="c-buy"></select></div>
+            <div class="field"><label>Verkauf in</label><select id="c-sell"></select></div>
+            <div class="field"><label>Verkaufsart</label><select id="c-sellmode">
+              <option value="order">Verkaufsauftrag</option><option value="instant">Sofortverkauf</option></select></div>
+            <div class="field"><label>Einkaufsart</label><select id="c-buymode">
+              <option value="instant">Sofortkauf</option><option value="order">Kaufauftrag</option></select></div>
+            <div class="field"><label>Tagesbonus %</label><input id="c-daily" type="number" inputmode="decimal" value="0"></div>
+            <div class="field"><label>Stationsgebühr pro Craft</label><input id="c-station" type="number" inputmode="numeric" value="0"></div>
+            <div class="full"><label class="toggle"><span>Mit Fokus craften</span><input type="checkbox" id="c-focus"></label></div>
+          </div>
+        </details>
+      </div>
+
+      <div class="banner" id="c-banner"></div>
+
+      <div class="card">
+        <div class="row" style="justify-content:space-between"><b>Was du kaufen musst</b>
+          <button class="btn" id="c-all-live">↺ Alle auf Live</button></div>
+        <div class="muted small" style="margin:4px 0 2px">Rückgabe wird in weiteren Runden wieder eingesetzt – am Ende bleibt nur ein kleiner Rest (weniger als ein Craft).</div>
+        <div id="c-mats"></div>
+      </div>
+
+      <div class="card"><table class="res num" id="c-table"></table></div>
+      <button class="btn primary block" id="c-shop">🛒 Zur Einkaufsliste</button>
+    </div>
+  </section>
+
   <!-- ===================================================== Einkaufsliste -->
   <section class="view" id="view-shop">
     <div class="tiles" id="shop-tiles"></div>
@@ -119,7 +174,8 @@
 
 <nav class="tabs">
   <button data-view="refine" class="on"><span class="ic">⛏</span>Refining</button>
-  <button data-view="shop"><span class="ic">🛒</span>Einkaufsliste</button>
+  <button data-view="craft"><span class="ic">⚒</span>Crafting</button>
+  <button data-view="shop"><span class="ic">🛒</span>Einkauf</button>
   <button data-view="settings"><span class="ic">⚙</span>Einstellungen</button>
 </nav>
 

@@ -1,6 +1,6 @@
 # Albion Silber Tool (Web)
 
-Refining-Rechner mit Live-Preisen für Albion Online (Server Europe), optimiert fürs iPhone.
+Refining- und Crafting-Rechner (Tränke, Essen, Gear) mit Live-Preisen für Albion Online (Server Europe), optimiert fürs iPhone.
 
 **Aufs iPhone:** Link in Safari öffnen → Teilen → „Zum Home-Bildschirm“.
 Updates kommen automatisch beim nächsten Öffnen.

@@ -82,8 +82,31 @@
   // ------------------------------------------------------------ Spieldaten
   class GameData {
     constructor(data) {
-      this.recipes = data.recipes;
-      this.names = data.names;
+      if (data.r) { // kompaktes Format: [amount, focus, silver, res, cat, group, tier, ench]
+        this.recipes = {};
+        for (const [k, v] of Object.entries(data.r)) {
+          this.recipes[k] = { amount: v[0], focus: v[1], silver: v[2], res: v[3], cat: v[4], group: v[5], tier: v[6], ench: v[7] };
+        }
+        this.names = data.n;
+      } else {
+        this.recipes = data.recipes;
+        this.names = data.names;
+      }
+    }
+    search(text, group) {
+      const words = (text || "").toLowerCase().split(/\s+/).filter(Boolean);
+      const out = [];
+      for (const [id, r] of Object.entries(this.recipes)) {
+        if (group && r.group !== group) continue;
+        if (words.length) {
+          const hay = (this.name(id) + " " + id + " t" + r.tier + "." + r.ench + " t" + r.tier).toLowerCase();
+          if (!words.every((w) => hay.includes(w))) continue;
+        }
+        out.push(id);
+      }
+      out.sort((a, b) => this.name(a).localeCompare(this.name(b), "de") ||
+        this.recipes[a].tier - this.recipes[b].tier || this.recipes[a].ench - this.recipes[b].ench);
+      return out;
     }
     name(id) { return this.names[id] || id; }
     label(id) {
@@ -461,6 +484,20 @@
     return [lo, simulate(lo, cnt, crafts, rrr)[1]];
   }
 
+  /** Pro Zutat: was du kaufen musst, damit am Ende (fast) nichts übrig bleibt. */
+  function buyPlan(recipe, crafts, rrr) {
+    return recipe.res.map(([id, cnt, ret]) => {
+      const [buy, rest] = buyAmount(cnt, crafts, rrr, !!ret);
+      return { id, cnt, full: cnt * crafts, buy, rest, ret: !!ret };
+    });
+  }
+
+  /** Wie viele Crafts für `pieces` Stück (z. B. Tränke: 5 Stück pro Craft). */
+  function craftsFor(recipe, pieces) {
+    const amt = Math.max(1, recipe.amount || 1);
+    return pieces > 0 ? Math.ceil(pieces / amt) : 0;
+  }
+
   /** Einkaufsmengen und Kosten für n Refines (Rückgabe wird weiterverwendet). */
   function needs(r, n, focus) {
     const rrr = r[focus ? "rrr_f" : "rrr_nf"];
@@ -504,7 +541,7 @@
     parseDate, ageHours, fmtAge, fmtSilver, fmtNum, ceilInt,
     GameData, PriceStore, bonusCityFor, productionBonus, returnRate, focusCost,
     salesTax, sellFee, buyUnitCost, salePrice, bestSale, volumeOk, calcCraft,
-    refineTable, needs, refineAmount, refineDetail, simulate, buyAmount,
+    refineTable, needs, refineAmount, refineDetail, simulate, buyAmount, buyPlan, craftsFor,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = Core;
   else root.Core = Core;

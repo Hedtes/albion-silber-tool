@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Albion Silber Tool</title>
+<meta name="description" content="Refining-Rechner mit Live-Preisen für Albion Online (Server Europe)">
+<meta name="theme-color" content="#12161f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Silber Tool">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icons/icon-64.png">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <img src="icons/icon-64.png" alt="">
+  <h1>ALBION SILBER TOOL</h1>
+  <span class="badge" id="premium-badge"></span>
+</header>
+
+<main>
+  <!-- ===================================================== Refining -->
+  <section class="view active" id="view-refine">
+    <div class="chips" id="res-chips"></div>
+
+    <div class="card qty" style="margin-top:12px">
+      <label class="t" for="qty">MENGE · Stück Endprodukt pro Stufe</label>
+      <input class="big num" id="qty" type="number" inputmode="numeric" min="0" step="1" value="1000">
+      <div class="quick" id="qty-quick"></div>
+      <button class="btn primary block" id="load-btn" style="margin-top:12px">⟳  Live-Preise laden</button>
+      <div class="progress" id="progress"><div></div></div>
+      <div class="status" id="status"></div>
+    </div>
+
+    <div class="card">
+      <details class="opts" id="opts">
+        <summary>Städte, Stufen &amp; Fokus <span class="muted small" id="opts-sum"></span></summary>
+        <div class="grid">
+          <div class="field"><label>Refining-Stadt</label><select id="o-city"></select></div>
+          <div class="field"><label>Einkauf in</label><select id="o-buy"></select></div>
+          <div class="field"><label>Verkauf in</label><select id="o-sell"></select></div>
+          <div class="field"><label>Verkaufsart</label><select id="o-sellmode">
+            <option value="order">Verkaufsauftrag</option><option value="instant">Sofortverkauf</option></select></div>
+          <div class="field"><label>Einkaufsart</label><select id="o-buymode">
+            <option value="instant">Sofortkauf</option><option value="order">Kaufauftrag</option></select></div>
+          <div class="field"><label>Tagesbonus %</label><input id="o-daily" type="number" inputmode="decimal" value="0"></div>
+          <div class="field"><label>Fokus-Effizienz (FCE)</label><input id="o-fce" type="number" inputmode="numeric" value="0"></div>
+          <div class="field"><label>Min. Verkäufe/Tag (Scan)</label><input id="o-minvol" type="number" inputmode="decimal" value="1"></div>
+          <div class="field full"><label>Tiers</label><div class="mini-chips" id="o-tiers"></div></div>
+          <div class="field full"><label>Verzauberung</label><div class="mini-chips" id="o-enchs"></div></div>
+          <div class="field full"><label>Scan sortieren nach</label><select id="o-sort">
+            <option value="qty">Gewinn für Menge</option><option value="unit">Gewinn pro Refine</option>
+            <option value="spf">Silber pro Fokus</option><option value="margin">Marge</option></select></div>
+          <div class="full">
+            <label class="toggle"><span>Mit Fokus rechnen <span class="muted small">(Farben, Sortierung, Liste)</span></span><input type="checkbox" id="o-focus"></label>
+            <label class="toggle"><span>Vorstufe selbst refinen, wenn günstiger <span class="muted small">(★)</span></span><input type="checkbox" id="o-chain"></label>
+          </div>
+          <div class="full row">
+            <button class="btn" id="one-city">🏠 Alles in einer Stadt</button>
+            <button class="btn" id="auto-cities">Bonusstadt + bester Markt</button>
+          </div>
+        </div>
+      </details>
+    </div>
+
+    <div class="tiles" id="tiles"></div>
+    <div class="muted small" id="list-info" style="margin:0 2px 8px"></div>
+    <div class="list" id="list"></div>
+  </section>
+
+  <!-- ===================================================== Einkaufsliste -->
+  <section class="view" id="view-shop">
+    <div class="tiles" id="shop-tiles"></div>
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <b>Was du herstellst</b>
+        <button class="btn" id="shop-reload">⟳ Preise</button>
+      </div>
+      <div id="shop-entries"></div>
+    </div>
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <b>Was du kaufen musst</b>
+        <button class="btn" id="shop-share">Teilen / Kopieren</button>
+      </div>
+      <div class="muted small" style="margin-top:4px">„Kaufen“ rechnet mit der Rücklaufquote: zurückgegebenes Material wird direkt weiterverwendet.</div>
+      <div id="shop-mats"></div>
+    </div>
+    <button class="btn block" id="shop-clear">Liste leeren</button>
+  </section>
+
+  <!-- ===================================================== Einstellungen -->
+  <section class="view" id="view-settings">
+    <div class="card">
+      <b>Allgemein</b>
+      <div class="grid" id="settings-grid"></div>
+    </div>
+    <div class="card">
+      <b>Daten</b>
+      <div class="row" style="margin-top:10px">
+        <button class="btn" id="clear-manual">Alle manuellen Preise löschen</button>
+        <button class="btn" id="clear-cache">Preis-Cache leeren</button>
+        <button class="btn" id="reset-settings">Standardwerte</button>
+      </div>
+    </div>
+    <div class="card small muted">
+      <b style="color:var(--ink)">Aufs iPhone holen</b><br>
+      In <b>Safari</b> öffnen → <b>Teilen</b> (Quadrat mit Pfeil) → <b>„Zum Home-Bildschirm“</b>. Dann startet das Tool wie eine App.
+      Updates kommen automatisch beim nächsten Öffnen.<br><br>
+      Preise: Albion Online Data Project (Server Europe). Community-Daten – vor dem Kauf im Spiel prüfen.<br>
+      Version <span id="app-version"></span>
+    </div>
+  </section>
+</main>
+
+<nav class="tabs">
+  <button data-view="refine" class="on"><span class="ic">⛏</span>Refining</button>
+  <button data-view="shop"><span class="ic">🛒</span>Einkaufsliste</button>
+  <button data-view="settings"><span class="ic">⚙</span>Einstellungen</button>
+</nav>
+
+<!-- ===================================================== Refining-Rechner -->
+<div class="sheet" id="calc">
+  <div class="bar">
+    <button class="icon-btn" id="calc-close" aria-label="Zurück">←</button>
+    <h2 id="calc-title">Refining-Rechner</h2>
+  </div>
+  <div class="body">
+    <div class="muted small" id="calc-where" style="margin-bottom:10px"></div>
+    <div class="seg" id="calc-mode" style="margin-bottom:10px">
+      <button data-m="qty" class="on">Menge herstellen</button>
+      <button data-m="have">Ich habe Rohstoffe</button>
+    </div>
+    <div class="row" id="calc-have-row" style="display:none;margin-bottom:10px">
+      <div class="field" style="flex:1"><label id="calc-have-label">Rohstoffe vorhanden</label>
+        <input id="calc-have" type="number" inputmode="numeric" value="1000"></div>
+    </div>
+    <div class="muted small" id="calc-qty-info" style="margin-bottom:10px"></div>
+    <div class="banner" id="calc-banner"></div>
+    <div class="card">
+      <div class="row" style="justify-content:space-between"><b>Preise</b>
+        <button class="btn" id="calc-all-live">↺ Alle auf Live</button></div>
+      <div id="calc-prices"></div>
+      <div class="muted small">✎ = Preis selbst eintragen · ↺ = wieder Live-Preis</div>
+    </div>
+    <div class="card">
+      <table class="res num" id="calc-table"></table>
+    </div>
+    <button class="btn primary block" id="calc-shop">🛒 Diese Menge zur Einkaufsliste</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"><span id="toast-text"></span><button id="toast-btn">Neu laden</button></div>
+
+<script src="core.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

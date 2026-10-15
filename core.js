@@ -1,0 +1,484 @@
+/* Albion Silber Tool – Rechenkern (Web-Version)
+ * 1:1 aus albion_core.py übertragen, damit PC- und Handy-Version gleich rechnen.
+ */
+(function (root) {
+  "use strict";
+
+  const API_HOST = "https://europe.albion-online-data.com";
+  const ROYAL_CITIES = ["Bridgewatch", "Fort Sterling", "Lymhurst", "Martlock", "Thetford"];
+  const CITIES = ROYAL_CITIES.concat(["Caerleon", "Brecilien"]);
+  const BLACK_MARKET = "Black Market";
+  const MARKETS = CITIES.concat([BLACK_MARKET]);
+  const AUTO_CITY = "Auto (Bonusstadt)";
+  const AUTO_MARKET = "Bester Markt (auto)";
+  const SAME_CITY = "Wie Refining-Stadt";
+  const REFINING_CATS = new Set(["ore", "wood", "hide", "fiber", "rock"]);
+  const REFINE_TYPES = [
+    ["ore", "Erz", "Barren"], ["wood", "Holz", "Planken"], ["fiber", "Fasern", "Stoff"],
+    ["hide", "Häute", "Leder"], ["rock", "Stein", "Blöcke"],
+  ];
+
+  const DEFAULT_SETTINGS = {
+    premium: true,
+    quality: 1,
+    max_age_hours: 24,
+    manual_until_newer: true,
+    history_days: 7,
+    price_basis: "min", // "current" | "avg" | "min"
+    base_bonus: 18.0,
+    focus_bonus: 59.0,
+    refining_city_bonus: 40.0,
+    crafting_city_bonus: 15.0,
+    sales_tax_premium: 4.0,
+    sales_tax_normal: 8.0,
+    setup_fee: 2.5,
+    city_specs: {
+      "Thetford": ["ore", "mace", "naturestaff", "firestaff", "leather_armor", "cloth_helmet"],
+      "Fort Sterling": ["wood", "hammer", "spear", "holystaff", "plate_helmet", "cloth_armor"],
+      "Lymhurst": ["fiber", "sword", "bow", "arcanestaff", "leather_helmet", "leather_shoes"],
+      "Martlock": ["hide", "axe", "quarterstaff", "froststaff", "plate_shoes", "offhand"],
+      "Bridgewatch": ["rock", "crossbow", "dagger", "cursestaff", "plate_armor", "cloth_shoes"],
+      "Caerleon": ["knuckles", "gatherergear", "tools", "food"],
+      "Brecilien": ["potion", "cape", "bag"],
+    },
+  };
+
+  // ------------------------------------------------------------ Hilfen
+  const now = () => Date.now() / 1000;
+
+  function parseDate(s) {
+    if (!s || s.startsWith("0001")) return null;
+    const t = Date.parse(/Z$|[+-]\d\d:\d\d$/.test(s) ? s : s + "Z");
+    return isNaN(t) ? null : t / 1000;
+  }
+
+  function ageHours(ts) {
+    if (!ts) return null;
+    return Math.max(0, (now() - ts) / 3600);
+  }
+
+  function fmtAge(ts) {
+    const h = ageHours(ts);
+    if (h === null) return "–";
+    if (h < 1) return Math.floor(h * 60) + " min";
+    if (h < 48) return Math.round(h) + " h";
+    return Math.round(h / 24) + " T";
+  }
+
+  function fmtSilver(v) {
+    if (v === null || v === undefined || isNaN(v)) return "–";
+    const r = Math.round(v);
+    const s = Math.abs(r).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+    return (r < 0 ? "-" : "") + s;
+  }
+
+  function fmtNum(v, digits) {
+    if (v === null || v === undefined || isNaN(v)) return "–";
+    return v.toFixed(digits === undefined ? 1 : digits).replace(".", ",");
+  }
+
+  const ceilInt = (x) => Math.ceil(x - 1e-9);
+
+  // ------------------------------------------------------------ Spieldaten
+  class GameData {
+    constructor(data) {
+      this.recipes = data.recipes;
+      this.names = data.names;
+    }
+    name(id) { return this.names[id] || id; }
+    label(id) {
+      const r = this.recipes[id];
+      let tier = id[0] === "T" ? parseInt(id[1], 10) : 0;
+      let ench = 0;
+      if (id.includes("@")) ench = parseInt(id.split("@").pop(), 10) || 0;
+      if (r) tier = r.tier || tier;
+      const tag = tier ? "T" + tier + (ench ? "." + ench : "") : "";
+      return tag ? `${this.name(id)} (${tag})` : this.name(id);
+    }
+  }
+
+  // ------------------------------------------------------------ Rücklaufquote
+  function bonusCityFor(settings, category) {
+    for (const [city, cats] of Object.entries(settings.city_specs)) {
+      if (cats.includes(category)) return city;
+    }
+    return null;
+  }
+
+  function productionBonus(settings, city, category, useFocus, daily) {
+    let b = settings.base_bonus + (daily || 0);
+    if ((settings.city_specs[city] || []).includes(category)) {
+      b += REFINING_CATS.has(category) ? settings.refining_city_bonus : settings.crafting_city_bonus;
+    }
+    if (useFocus) b += settings.focus_bonus;
+    return b;
+  }
+
+  const returnRate = (bonus) => 1 - 1 / (1 + bonus / 100);
+
+  function focusCost(base, fce) {
+    return base * Math.pow(0.5, Math.max(0, fce || 0) / 10000);
+  }
+
+  // ------------------------------------------------------------ Gebühren
+  function salesTax(s) { return (s.premium ? s.sales_tax_premium : s.sales_tax_normal) / 100; }
+  function sellFee(s, mode) { return salesTax(s) + (mode === "order" ? s.setup_fee / 100 : 0); }
+  function buyUnitCost(s, price, mode) {
+    if (price === null || price === undefined) return null;
+    return mode === "order" ? price * (1 + s.setup_fee / 100) : price;
+  }
+
+  // ------------------------------------------------------------ Preise
+  class PriceStore {
+    /** storage: {get(key, fallback), set(key, value)} */
+    constructor(settings, storage) {
+      this.settings = settings;
+      this.storage = storage;
+      this.live = storage.get("live", {});        // "ITEM|Markt" -> {sell, sell_ts, buy, buy_ts}
+      this.history = storage.get("history", {});  // "ITEM|Markt" -> {ts, days, data:[[tag, n, avg]]}
+      this.manual = storage.get("manual", {});    // "ITEM|Markt|sell/buy" -> {p, ts}
+      this.lastPruned = 0;
+    }
+    save() {
+      this.storage.set("live", this.live);
+      this.storage.set("history", this.history);
+    }
+    saveManual() { this.storage.set("manual", this.manual); }
+
+    // ---- Abruf
+    static batches(ids, limit) {
+      const out = [];
+      let cur = [], len = 0;
+      for (const id of [...new Set(ids)].sort()) {
+        const add = encodeURIComponent(id).length + 1;
+        if (cur.length && len + add > limit) { out.push(cur); cur = []; len = 0; }
+        cur.push(id); len += add;
+      }
+      if (cur.length) out.push(cur);
+      return out;
+    }
+
+    async _run(endpoint, params, ids, ingest, limit, onProgress, signal) {
+      const batches = PriceStore.batches(ids, limit);
+      let errors = 0;
+      for (let n = 0; n < batches.length; n++) {
+        if (signal && signal.aborted) break;
+        const b = batches[n];
+        const url = `${API_HOST}/api/v2/stats/${endpoint}/` +
+          b.map(encodeURIComponent).join(",").replace(/%40/g, "@") + ".json?" + new URLSearchParams(params);
+        let data = null, lastErr = null;
+        for (let attempt = 0; attempt < 3 && data === null; attempt++) {
+          try {
+            const res = await fetch(url, { signal });
+            if (!res.ok) throw new Error("HTTP " + res.status);
+            data = await res.json();
+          } catch (e) {
+            lastErr = e;
+            if (signal && signal.aborted) break;
+            await new Promise((r) => setTimeout(r, 1500 + attempt * 2500));
+          }
+        }
+        if (data === null) { errors++; this.lastError = lastErr; } else ingest(data, b);
+        if (onProgress) onProgress(n + 1, batches.length);
+        if (n < batches.length - 1) await new Promise((r) => setTimeout(r, 400)); // API-Limit
+      }
+      return errors;
+    }
+
+    async fetchPrices(ids, locations, onProgress, signal) {
+      const params = { locations: locations.join(","), qualities: this.settings.quality || 1 };
+      const wanted = new Set(locations);
+      const err = await this._run("prices", params, ids, (rows) => this._ingest(rows, wanted), 3500, onProgress, signal);
+      this.save();
+      this.lastPruned = this.pruneManual();
+      return err;
+    }
+
+    _ingest(rows, wanted) {
+      for (const r of rows) {
+        const loc = r.city;
+        if (!wanted.has(loc)) continue;
+        const key = r.item_id + "|" + loc;
+        const e = this.live[key] || {};
+        const sd = parseDate(r.sell_price_min_date), bd = parseDate(r.buy_price_max_date);
+        if (r.sell_price_min && sd) { e.sell = r.sell_price_min; e.sell_ts = sd; }
+        if (r.buy_price_max && bd) { e.buy = r.buy_price_max; e.buy_ts = bd; }
+        if (Object.keys(e).length) this.live[key] = e;
+      }
+    }
+
+    async fetchHistory(ids, locations, onProgress, signal) {
+      const days = this.settings.history_days || 7;
+      const fresh = now() - 3 * 3600;
+      ids = [...new Set(ids)].filter((i) => locations.some((l) => {
+        const h = this.history[i + "|" + l];
+        return !h || h.ts < fresh || h.days !== days;
+      }));
+      if (!ids.length) { if (onProgress) onProgress(1, 1); return 0; }
+      const start = new Date((now() - (days + 1) * 86400) * 1000).toISOString().slice(0, 10);
+      const params = { locations: locations.join(","), qualities: this.settings.quality || 1, "time-scale": 24, date: start };
+      const wanted = new Set(locations);
+      const err = await this._run("history", params, ids, (rows, b) => this._ingestHistory(rows, wanted, days, b),
+        800, onProgress, signal);
+      this.save();
+      return err;
+    }
+
+    _ingestHistory(rows, wanted, days, batch) {
+      const t = now(), cutoff = t - days * 86400;
+      const got = {};
+      for (const r of rows) {
+        const loc = r.location || r.city;
+        if (!wanted.has(loc)) continue;
+        for (const d of r.data || []) {
+          const ts = parseDate(d.timestamp);
+          const cnt = d.item_count || 0, avg = d.avg_price || 0;
+          if (!ts || ts < cutoff || cnt <= 0 || avg <= 0) continue;
+          const k = r.item_id + "|" + loc;
+          (got[k] = got[k] || {})[new Date(ts * 1000).toISOString().slice(0, 10)] = [cnt, avg];
+        }
+      }
+      for (const [k, m] of Object.entries(got)) {
+        this.history[k] = { ts: t, days, data: Object.keys(m).sort().map((d) => [d, m[d][0], m[d][1]]) };
+      }
+      for (const id of batch) for (const loc of wanted) {
+        const k = id + "|" + loc;
+        if (!got[k]) this.history[k] = { ts: t, days, data: [] };
+      }
+    }
+
+    stats(id, loc) {
+      const h = this.history[id + "|" + loc];
+      if (!h) return null;
+      const days = Math.max(1, h.days || 7);
+      const sold = h.data.reduce((a, x) => a + x[1], 0);
+      const avg = sold ? h.data.reduce((a, x) => a + x[1] * x[2], 0) / sold : null;
+      return { per_day: sold / days, avg, sold, days, ts: h.ts };
+    }
+
+    // ---- Zugriff
+    get(id, loc, kind, maxAge) {
+      const e = this.live[id + "|" + loc];
+      const m = this.manual[id + "|" + loc + "|" + kind];
+      if (m) {
+        const liveTs = (e && e[kind + "_ts"]) || 0;
+        if (!(this.settings.manual_until_newer && liveTs > m.ts)) return [m.p, "manuell", m.ts];
+      }
+      if (!e || e[kind] === undefined) return [null, null, null];
+      const ts = e[kind + "_ts"];
+      if (maxAge === undefined || maxAge === null) maxAge = this.settings.max_age_hours;
+      const h = ageHours(ts);
+      return [e[kind], h !== null && h <= maxAge ? "live" : "alt", ts];
+    }
+
+    setManual(id, loc, kind, price) {
+      const k = id + "|" + loc + "|" + kind;
+      if (price === null || price === undefined) delete this.manual[k];
+      else this.manual[k] = { p: Math.round(price), ts: now() };
+      this.saveManual();
+    }
+    isManual(id, loc, kind) { return this.get(id, loc, kind)[1] === "manuell"; }
+    clearManual() { this.manual = {}; this.saveManual(); }
+    pruneManual() {
+      if (!this.settings.manual_until_newer) return 0;
+      let n = 0;
+      for (const [k, m] of Object.entries(this.manual)) {
+        const [id, loc, kind] = k.split("|");
+        const e = this.live[id + "|" + loc];
+        if (((e && e[kind + "_ts"]) || 0) > m.ts) { delete this.manual[k]; n++; }
+      }
+      if (n) this.saveManual();
+      return n;
+    }
+  }
+
+  // ------------------------------------------------------------ Verkauf
+  function salePrice(store, s, id, loc, mode, maxAge) {
+    const [p, src, ts] = store.get(id, loc, mode === "instant" ? "buy" : "sell", maxAge);
+    const st = store.stats(id, loc);
+    const info = { current: p && src !== "alt" ? p : null, avg: st ? st.avg : null, per_day: st ? st.per_day : null };
+    if (src === "manuell") return [p, null, info];
+    const cur = info.current, avg = info.avg;
+    let price;
+    if (mode === "instant" || s.price_basis === "current") price = cur;
+    else if (s.price_basis === "avg") price = avg || cur;
+    else {
+      const vals = [cur, avg].filter((v) => v);
+      price = vals.length ? Math.min(...vals) : null;
+    }
+    if (!price) return null;
+    return [price, price === cur ? ts : null, info];
+  }
+
+  function bestSale(store, s, id, locations, sellMode, maxAge) {
+    let best = null, bestNet = -1;
+    for (const loc of locations) {
+      const mode = loc === BLACK_MARKET ? "instant" : sellMode;
+      const sp = salePrice(store, s, id, loc, mode, maxAge);
+      if (!sp) continue;
+      const net = sp[0] * (1 - sellFee(s, mode));
+      if (net > bestNet) { best = { price: sp[0], loc, mode, ts: sp[1], info: sp[2] }; bestNet = net; }
+    }
+    return best;
+  }
+
+  const volumeOk = (perDay, minVol, hideUnknown) => (perDay === null || perDay === undefined) ? !hideUnknown : perDay >= minVol;
+
+  // ------------------------------------------------------------ Crafting-Rechnung
+  function calcCraft(recipe, crafts, rrr, ingPrices, sellPrice, fee, stationFee, useFocus) {
+    let gross = 0, returnable = 0;
+    const missing = [];
+    for (const [id, cnt, ret] of recipe.res) {
+      const p = ingPrices[id];
+      if (p === null || p === undefined) { missing.push(id); continue; }
+      const cost = p * cnt * crafts;
+      gross += cost;
+      if (ret) returnable += cost;
+    }
+    const returned = returnable * rrr;
+    const netMat = gross - returned;
+    const station = (stationFee || 0) * crafts + (recipe.silver || 0) * crafts;
+    const produced = recipe.amount * crafts;
+    const revenueGross = (sellPrice || 0) * produced;
+    const feeAmt = revenueGross * fee;
+    const revenue = revenueGross - feeAmt;
+    const cost = netMat + station;
+    const profit = revenue - cost;
+    const focus = useFocus ? recipe.focus * crafts : 0;
+    return {
+      missing, produced, gross, returned, net_mat: netMat, station, revenue_gross: revenueGross,
+      fee: feeAmt, revenue, cost, profit, profit_each: produced ? profit / produced : 0,
+      margin: cost ? (profit / cost) * 100 : 0, focus, complete: !missing.length && !!sellPrice,
+    };
+  }
+
+  // ------------------------------------------------------------ Refining
+  function refineTable(gd, store, s, cat, opt) {
+    // opt: {tiers, enchs, city, buyCity, buyMode, sellLoc, sellMode, daily, fce, chain, maxAge}
+    const maxAge = opt.maxAge === undefined ? s.max_age_hours : opt.maxAge;
+    const kind = opt.buyMode === "instant" ? "sell" : "buy";
+    const memo = {};
+    const cityFor = (rec) => (opt.city === AUTO_CITY ? (bonusCityFor(s, rec.cat) || opt.buyCity) : opt.city);
+    const market = (item) => {
+      const [p, src, ts] = store.get(item, opt.buyCity, kind, maxAge);
+      return p && src !== "alt" ? [buyUnitCost(s, p, opt.buyMode), ts] : [null, null];
+    };
+    function ownCost(item, focus) {
+      const key = item + "|" + focus;
+      if (key in memo) return memo[key];
+      memo[key] = null;
+      const rec = gd.recipes[item];
+      if (!rec || !REFINING_CATS.has(rec.cat)) return null;
+      const rrr = returnRate(productionBonus(s, cityFor(rec), rec.cat, focus, opt.daily));
+      let total = 0;
+      for (const [rid, cnt, ret] of rec.res) {
+        const u = unit(rid, focus);
+        if (u === null) return null;
+        total += u * cnt * (ret ? 1 - rrr : 1);
+      }
+      memo[key] = total / rec.amount;
+      return memo[key];
+    }
+    function unit(item, focus) {
+      const [mp] = market(item);
+      if (opt.chain && gd.recipes[item]) {
+        const oc = ownCost(item, focus);
+        if (oc !== null && (mp === null || oc < mp)) return oc;
+      }
+      return mp;
+    }
+
+    const ids = Object.keys(gd.recipes).filter((i) => {
+      const r = gd.recipes[i];
+      return r.cat === cat && (!opt.tiers || !opt.tiers.length || opt.tiers.includes(r.tier)) &&
+        (!opt.enchs || opt.enchs.includes(r.ench));
+    }).sort((a, b) => gd.recipes[a].tier - gd.recipes[b].tier || gd.recipes[a].ench - gd.recipes[b].ench);
+    const locs = opt.sellLoc === AUTO_MARKET ? MARKETS : [opt.sellLoc];
+    const rows = [];
+    for (const id of ids) {
+      const rec = gd.recipes[id];
+      const cCity = cityFor(rec);
+      const [rawId, rawCnt] = rec.res[0];
+      const prevId = rec.res.length > 1 ? rec.res[1][0] : null;
+      const prevCnt = prevId ? rec.res[1][1] : 0;
+      const [rawP, rawTs] = market(rawId);
+      const [prevMp, prevTs] = prevId ? market(prevId) : [null, null];
+      const best = bestSale(store, s, id, locs, opt.sellMode, maxAge);
+      const row = {
+        id, cat, tier: rec.tier, ench: rec.ench, city: cCity, buy_city: opt.buyCity,
+        raw: rawId, raw_cnt: rawCnt, raw_price: rawP, prev: prevId, prev_cnt: prevCnt, prev_market: prevMp,
+        sell_price: best ? best.price : null, sell_loc: best ? best.loc : null, sell_mode: best ? best.mode : null,
+        per_day: best ? best.info.per_day : null, avg: best ? best.info.avg : null,
+        focus: focusCost(rec.focus, opt.fce),
+      };
+      const tss = [rawTs, prevTs, best ? best.ts : null].filter((t) => t);
+      row.ts = tss.length ? Math.min(...tss) : null;
+      for (const [tag, focus] of [["nf", false], ["f", true]]) {
+        const rrr = returnRate(productionBonus(s, cCity, cat, focus, opt.daily));
+        const prevU = prevId ? unit(prevId, focus) : 0;
+        row["rrr_" + tag] = rrr;
+        row["prev_" + tag] = prevU;
+        row["prev_self_" + tag] = !!(prevId && opt.chain && prevU !== null && (prevMp === null || prevU < prevMp));
+        const prices = { [rawId]: rawP };
+        if (prevId) prices[prevId] = prevU;
+        if (best && rawP !== null && (!prevId || prevU !== null)) {
+          const res = calcCraft(rec, 1, rrr, prices, best.price, sellFee(s, best.mode));
+          row["cost_" + tag] = res.cost; row["profit_" + tag] = res.profit; row["margin_" + tag] = res.margin;
+        } else {
+          row["cost_" + tag] = row["profit_" + tag] = row["margin_" + tag] = null;
+        }
+      }
+      row.spf = row.profit_f !== null && row.focus ? row.profit_f / row.focus : null;
+      rows.push(row);
+    }
+    return rows;
+  }
+
+  /** Einkaufsmengen und Kosten für n Refines (Rückgabe wird weiterverwendet). */
+  function needs(r, n, focus) {
+    const rrr = r[focus ? "rrr_f" : "rrr_nf"];
+    const raw = ceilInt(n * r.raw_cnt * (1 - rrr));
+    const prev = r.prev ? ceilInt(n * r.prev_cnt * (1 - rrr)) : 0;
+    const pu = r[focus ? "prev_f" : "prev_nf"];
+    let cost = null;
+    if (r.raw_price !== null && (!r.prev || pu !== null)) cost = raw * r.raw_price + (r.prev ? prev * pu : 0);
+    const profit = r[focus ? "profit_f" : "profit_nf"];
+    return { raw, prev, cost, profit: profit !== null ? n * profit : null, focus: focus ? n * r.focus : 0 };
+  }
+
+  /** Wie viele Refines schafft man mit rawHave Rohstoffen? */
+  function refineAmount(r, rawHave, focus) {
+    const rrr = r[focus ? "rrr_f" : "rrr_nf"];
+    const per = r.raw_cnt * (1 - rrr);
+    return per > 0 ? Math.floor(rawHave / per) : 0;
+  }
+
+  /** Vollständige Aufstellung für den Detail-Rechner. */
+  function refineDetail(gd, s, r, n, focus) {
+    const rec = gd.recipes[r.id];
+    const rrr = r[focus ? "rrr_f" : "rrr_nf"];
+    const nd = needs(r, n, focus);
+    const prices = { [r.raw]: r.raw_price };
+    if (r.prev) prices[r.prev] = r[focus ? "prev_f" : "prev_nf"];
+    const res = calcCraft(rec, n, rrr, prices, r.sell_price, sellFee(s, r.sell_mode || "order"));
+    const ok = res.complete && n > 0;
+    return {
+      n, rrr, raw_buy: nd.raw, prev_buy: r.prev ? nd.prev : null, cost_buy: nd.cost,
+      gross: res.missing.length ? null : res.gross, returned: res.missing.length ? null : res.returned,
+      revenue_gross: r.sell_price ? res.revenue_gross : null, fee: r.sell_price ? res.fee : null,
+      profit: ok ? res.profit : null, profit_each: ok ? res.profit / n : null, margin: ok ? res.margin : null,
+      focus: focus ? n * r.focus : null, spf: ok && focus && r.focus ? res.profit / (n * r.focus) : null,
+    };
+  }
+
+  const Core = {
+    API_HOST, ROYAL_CITIES, CITIES, BLACK_MARKET, MARKETS, AUTO_CITY, AUTO_MARKET, SAME_CITY,
+    REFINING_CATS, REFINE_TYPES, DEFAULT_SETTINGS,
+    parseDate, ageHours, fmtAge, fmtSilver, fmtNum, ceilInt,
+    GameData, PriceStore, bonusCityFor, productionBonus, returnRate, focusCost,
+    salesTax, sellFee, buyUnitCost, salePrice, bestSale, volumeOk, calcCraft,
+    refineTable, needs, refineAmount, refineDetail,
+  };
+  if (typeof module !== "undefined" && module.exports) module.exports = Core;
+  else root.Core = Core;
+})(typeof window !== "undefined" ? window : globalThis);

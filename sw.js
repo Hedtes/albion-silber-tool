@@ -1,5 +1,5 @@
 /* Service Worker: App offline verfügbar, Updates sofort (Netz zuerst, Cache als Reserve). */
-const CACHE = "ast-1.0.0";
+const CACHE = "ast-1.0.1";
 const FILES = ["./", "index.html", "style.css", "core.js", "app.js", "data/refining.json",
   "manifest.webmanifest", "icons/icon-64.png", "icons/icon-192.png", "icons/apple-touch-icon.png"];
 

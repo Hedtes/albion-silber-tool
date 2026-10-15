@@ -434,11 +434,38 @@
     return rows;
   }
 
+  // ------------------------------------------------------------ Einkaufsmengen
+  /** Craftet in Runden so viel wie möglich und verwendet die Rückgabe weiter. -> [geschafft, Rest] */
+  function simulate(buy, cnt, crafts, rrr) {
+    let stock = buy, done = 0;
+    while (done < crafts) {
+      const k = Math.min(crafts - done, Math.floor(stock / cnt + 1e-9));
+      if (k <= 0) break;
+      stock -= k * cnt * (1 - rrr);
+      done += k;
+    }
+    return [done, stock];
+  }
+
+  /** Kleinste Kaufmenge einer Zutat für `crafts` Crafts – am Ende bleibt (fast) nichts übrig. -> [kaufen, Rest] */
+  function buyAmount(cnt, crafts, rrr, returnable) {
+    crafts = Math.floor(crafts);
+    if (crafts <= 0) return [0, 0];
+    const total = cnt * crafts;
+    if (returnable === false || rrr <= 0) return [total, 0];
+    let lo = Math.max(cnt, Math.ceil(crafts * cnt * (1 - rrr) - 1e-9)), hi = total;
+    while (lo < hi) {
+      const mid = Math.floor((lo + hi) / 2);
+      if (simulate(mid, cnt, crafts, rrr)[0] >= crafts) hi = mid; else lo = mid + 1;
+    }
+    return [lo, simulate(lo, cnt, crafts, rrr)[1]];
+  }
+
   /** Einkaufsmengen und Kosten für n Refines (Rückgabe wird weiterverwendet). */
   function needs(r, n, focus) {
     const rrr = r[focus ? "rrr_f" : "rrr_nf"];
-    const raw = ceilInt(n * r.raw_cnt * (1 - rrr));
-    const prev = r.prev ? ceilInt(n * r.prev_cnt * (1 - rrr)) : 0;
+    const raw = buyAmount(r.raw_cnt, n, rrr)[0];
+    const prev = r.prev ? buyAmount(r.prev_cnt, n, rrr)[0] : 0;
     const pu = r[focus ? "prev_f" : "prev_nf"];
     let cost = null;
     if (r.raw_price !== null && (!r.prev || pu !== null)) cost = raw * r.raw_price + (r.prev ? prev * pu : 0);
@@ -477,7 +504,7 @@
     parseDate, ageHours, fmtAge, fmtSilver, fmtNum, ceilInt,
     GameData, PriceStore, bonusCityFor, productionBonus, returnRate, focusCost,
     salesTax, sellFee, buyUnitCost, salePrice, bestSale, volumeOk, calcCraft,
-    refineTable, needs, refineAmount, refineDetail,
+    refineTable, needs, refineAmount, refineDetail, simulate, buyAmount,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = Core;
   else root.Core = Core;

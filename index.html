@@ -13,7 +13,7 @@
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="icon" type="image/png" href="icons/icon-64.png">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=1.7.2">
 </head>
 <body>
 <header class="top">
@@ -124,6 +124,20 @@
     <div class="seg" id="a-kind" style="margin-bottom:10px">
       <button data-k="potion">🧪 Tränke</button>
       <button data-k="food">🍲 Essen</button>
+    </div>
+    <div class="card" id="ab-card">
+      <div class="row" style="justify-content:space-between;gap:8px;flex-wrap:nowrap">
+        <b id="ab-title">🏆 Profitabelste Tränke</b>
+        <button class="btn primary" id="ab-run">🔍 Suchen</button>
+      </div>
+      <div class="small muted" id="ab-hint" style="margin-top:4px">Prüft alle Sorten, Tiers und .0–.3 mit dem billigsten Weg – mit deiner Menge und deinen Städten aus dem Rechner.</div>
+      <div class="row" style="gap:8px;margin-top:8px;flex-wrap:nowrap">
+        <label class="small muted" for="ab-vol" style="flex:1">Mind. Verkäufe/Tag</label>
+        <input id="ab-vol" type="number" inputmode="decimal" value="5" style="width:90px;padding:8px;border-radius:9px;border:1px solid var(--line);background:var(--panel2)">
+      </div>
+      <div class="progress"><div></div></div>
+      <div class="status"></div>
+      <div id="ab-list"></div>
     </div>
     <div class="card">
       <input id="a-search" type="search" placeholder="Suchen, z. B. „lebenstrank“ oder „eintopf“" style="width:100%;padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--panel2);font-size:16px">
@@ -449,7 +463,7 @@
 <div class="toast note" id="note"><span id="note-text"></span><button id="note-btn">Ansehen</button></div>
 <div class="toast" id="toast"><span id="toast-text"></span><button id="toast-btn">Neu laden</button></div>
 
-<script src="core.js"></script>
-<script src="app.js"></script>
+<script src="core.js?v=1.7.2"></script>
+<script src="app.js?v=1.7.2"></script>
 </body>
 </html>

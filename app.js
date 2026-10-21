@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const C = window.Core;
-  const VERSION = "1.7.1";
+  const VERSION = "1.7.2";
   const $ = (id) => document.getElementById(id);
   const S = C.fmtSilver;
   const SLOW_DAYS = 7;
@@ -1148,9 +1148,9 @@
       daily: Number(ui.daily) || 0, sell_loc: r.sell_loc || r.city, sell_mode: r.sell_mode || ui.sellMode };
   }
   function addToShop(entries, src) {
-    entries.forEach((e) => { if (gd.recipes[e.id]) projects.unshift(projectFromEntry(e, src || "Rechner")); });
+    entries.forEach((e) => { if (gd.recipes[e.id]) projects.push(projectFromEntry(e, src || "Rechner")); });
     saveProjects();
-    note(entries.length === 1 ? `📝 Rezept gespeichert: ${S(projects[0].pieces)} × ${gd.label(projects[0].id)}` : `📝 ${entries.length} Rezepte gespeichert`);
+    note(entries.length === 1 ? `📝 Rezept gespeichert: ${S(projects[projects.length - 1].pieces)} × ${gd.label(projects[projects.length - 1].id)}` : `📝 ${entries.length} Rezepte gespeichert`);
   }
 
   /** Ein Eintrag der Einkaufsliste – funktioniert für jedes Rezept (Refining, Tränke, Gear …). */
@@ -1181,7 +1181,10 @@
   function note(text) {
     $("note-text").textContent = text;
     $("note").classList.add("on");
-    $("note-btn").onclick = () => { $("note").classList.remove("on"); ui.listPane = "shop"; show("shop"); };
+    $("note-btn").onclick = () => {
+      $("note").classList.remove("on"); ui.listPane = "shop"; show("shop");
+      setTimeout(() => { const all = document.querySelectorAll("#proj-list .proj"); if (all.length) all[all.length - 1].scrollIntoView({ behavior: "smooth", block: "start" }); }, 150);
+    };
     clearTimeout(noteTimer); noteTimer = setTimeout(() => $("note").classList.remove("on"), 5000);
   }
   const mat = (item, need, have, buy, unit, cost, city) => ({ item, need, have: have || 0, buy: Math.max(0, buy), unit, cost, city, done: buy <= 0, paid: null });
@@ -1209,6 +1212,14 @@
       city: e.city, buyCity: e.buy_city, sellLoc: e.sell_loc, sellMode: e.sell_mode, focus: !!e.focus,
       mats: k.plan.map((pl) => mat(pl.id, pl.buy, 0, pl.buy, pl.price, pl.price === null ? null : pl.buy * pl.price, e.buy_city)), steps: [],
       cost: k.buyCost, price: k.best ? k.best.price : null, revenue: k.revenue, profit: k.profit };
+  }
+  function saveRecipe(p) {
+    projects = storage.get("projects", projects);   // immer den neuesten Stand nehmen
+    projects.push(p); saveProjects();
+    const ok = (storage.get("projects", []) || []).some((x) => x.uid === p.uid);
+    if (!ok) { alert("Speichern hat nicht geklappt – ist der Speicher voll oder Privat-Modus an?"); return; }
+    note(`📝 Gespeichert (Nr. ${projects.length}): ${S(p.pieces)} × ${gd.label(p.id)}`);
+    renderShop();
   }
   const matCost = (m) => m.paid !== null && m.paid !== undefined ? m.paid : m.cost;
   const toBuy = (p) => p.mats.filter((m) => m.buy > 0);
@@ -1999,6 +2010,79 @@
     $("es-vol").value = ui.esVol; $("es-age").value = ui.esAge; $("es-min").value = ui.esMin;
   }
 
+  // ------------------------------------------------------------ Profitabelste Tränke / Essen
+  let abResult = null;
+  function abVariants() {
+    return Object.keys(gd.recipes).filter((id) => gd.recipes[id].cat === aCat() && gd.recipes[id].ench === 0)
+      .flatMap((b) => aVariants(b));
+  }
+  function abEvaluate() {
+    const out = [];
+    for (const v of abVariants()) {
+      const o = aOpts(v);
+      const rec = gd.recipes[v];
+      const pieces = Math.max(ui.aInput === "budget" ? 0 : aQty(), rec.amount);
+      let plan;
+      if (ui.aInput === "budget") {
+        const pc = aPieces(v, o);
+        if (!pc.pieces) continue;
+        plan = C.cheapPlan(gd, store, settings, v, Math.max(pc.pieces, rec.amount), o);
+      } else plan = C.cheapPlan(gd, store, settings, v, pieces, o);
+      if (!plan.complete) continue;
+      out.push({ id: v, plan, o, profit: plan.res.profit, each: plan.res.profit / plan.pieces, margin: plan.res.margin,
+        vol: plan.best && plan.best.info ? plan.best.info.per_day : null, loc: plan.best ? plan.best.loc : o.sellLocs[0] });
+    }
+    return out.sort((a, b) => b.profit - a.profit);
+  }
+  function abRun() {
+    const vs = abVariants();
+    const bases = [...new Set(vs.map((v) => v.split("@")[0]))];
+    const buy = new Set(), sell = new Set();
+    vs.forEach((v) => { const o = aOpts(v); buy.add(o.buyCity); o.sellLocs.forEach((l) => sell.add(l)); });
+    const items = alchItemsToLoad(vs);
+    runJobs([[items, [...buy]], [vs, [...sell]]], async () => {
+      const top = abEvaluate().filter((x) => x.profit > 0).slice(0, 30);
+      const hist = [...new Set(top.map((x) => x.id))];
+      if (hist.length) await runJobs([[hist, [...new Set(top.map((x) => x.loc))], "history"]], () => abRender());
+      else abRender();
+    });
+    $("ab-list").innerHTML = `<div class="small muted" style="margin-top:6px">Prüfe ${vs.length} Sorten/Stufen aus ${bases.length} Rezepten …</div>`;
+  }
+  function abRender() {
+    const box = $("ab-list");
+    if (!box || !gd) return;
+    const food = aCat() === "food";
+    $("ab-title").textContent = food ? "🏆 Profitabelstes Essen" : "🏆 Profitabelste Tränke";
+    if (document.activeElement !== $("ab-vol")) $("ab-vol").value = ui.abVol === undefined ? 5 : ui.abVol;
+    box.innerHTML = "";
+    const all = abEvaluate();
+    if (!all.length) { box.append(el("div", { class: "small muted", style: "margin-top:6px" }, "Noch keine Preise – „🔍 Suchen“ tippen.")); return; }
+    const minVol = ui.abVol === undefined ? 5 : Number(ui.abVol) || 0;
+    const list = all.filter((x) => x.profit > 0 && (x.vol === null || x.vol === undefined || x.vol >= minVol)).slice(0, 15);
+    const qtyTxt = ui.aInput === "budget" ? `Budget ${S(aBudget())} Silber` : `${S(aQty())} Stück`;
+    box.append(el("div", { class: "small muted", style: "margin:6px 0 2px" },
+      list.length ? `Top ${list.length} von ${all.length} geprüften · gerechnet für ${qtyTxt} · antippen = im Rechner öffnen` :
+        `Von ${all.length} geprüften ist gerade nichts im Plus (mit mind. ${minVol} Verkäufen/Tag). Filter senken oder Städte im Rechner ändern.`));
+    list.forEach((x, i) => {
+      const volTxt = x.vol === null || x.vol === undefined ? "Verkäufe/Tag ?" : `${C.fmtNum(x.vol, x.vol < 10 ? 1 : 0)} Verkäufe/Tag`;
+      const warn = x.vol !== null && x.vol !== undefined && x.plan.pieces > x.vol * 3;
+      box.append(el("div", { class: "shop-item", style: "cursor:pointer;align-items:flex-start" },
+        el("div", { class: "rank" }, String(i + 1)),
+        el("div", { class: "t", on: { click: () => abOpen(x) } },
+          el("div", { style: "font-weight:700" }, gd.label(x.id)),
+          el("div", { class: "small muted" }, `${S(x.plan.pieces)} Stk · Einkauf ${S(x.plan.buyCost)} · Verkauf ${x.loc} ${S(x.plan.best ? x.plan.best.price : null)}`),
+          el("div", { class: "small" + (warn ? " neg" : "") }, `${S(x.each)} pro Stück · Marge ${C.fmtNum(x.margin)} % · ${volTxt}` + (warn ? " · Menge evtl. zu groß für den Markt" : ""))),
+        el("div", { style: "text-align:right", on: { click: () => abOpen(x) } },
+          el("div", { class: "pos num", style: "font-weight:800" }, `+${S(x.profit)}`)),
+        el("button", { class: "icon-btn", title: "Als Rezept speichern", on: { click: () => saveRecipe(projectFromAlch(x.id, x.o, x.plan)) } }, "📝")));
+    });
+  }
+  function abOpen(x) {
+    ui.aBase = x.id.split("@")[0]; ui.aEnch = gd.recipes[x.id].ench; saveUi();
+    renderAlchSearch(); renderAlch();
+    $("a-calc").scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
   // ------------------------------------------------------------ Buch-Auswertung
   function renderEval() {
     const ranges = [[7, "7 Tage"], [30, "30 Tage"], [0, "Alles"]];
@@ -2180,7 +2264,7 @@
     if (view === "shop") showListPane(ui.listPane || "shop");
     if (view === "craft") { renderCraftSearch(); renderCraft(); }
     if (view === "silver") renderSilver();
-    if (view === "alch") { renderAlchSearch(); renderAlch(); }
+    if (view === "alch") { renderAlchSearch(); renderAlch(); abRender(); }
     if (view === "settings") renderSettings();
     window.scrollTo(0, 0);
   }
@@ -2277,8 +2361,10 @@
     // Tränke & Essen
     [...$("a-kind").children].forEach((b) => b.addEventListener("click", () => {
       ui.aKind = b.dataset.k; ui.aBase = ui.aKind === "food" ? "T4_MEAL_STEW" : "T4_POTION_HEAL"; ui.aEnch = 0;
-      saveUi(); $("a-search").value = ""; renderAlchSearch(); renderAlch();
+      saveUi(); $("a-search").value = ""; renderAlchSearch(); renderAlch(); abRender();
     }));
+    $("ab-run").addEventListener("click", abRun);
+    $("ab-vol").addEventListener("change", (e) => { ui.abVol = Number(e.target.value) || 0; saveUi(); abRender(); });
     let at = null;
     $("a-search").addEventListener("input", () => { clearTimeout(at); at = setTimeout(renderAlchSearch, 150); });
     const aq = $("a-qty");
@@ -2341,16 +2427,14 @@
     $("c-all-live").addEventListener("click", () => { const k = craftCalc(); if (k) resetCraftPrices(k.plan.map((p) => p.id).concat(["prod"])); });
     $("c-shop").addEventListener("click", () => {
       const k = craftCalc(); if (!k) return;
-      projects.unshift(projectFromCraft(k)); saveProjects();
-      note(`📝 Gespeichert: ${S(projects[0].pieces)} × ${gd.label(ui.cItem)}`);
+      saveRecipe(projectFromCraft(k));
     });
     $("a-save").addEventListener("click", () => {
       const id = aId(); if (!id) return;
       const o = aOpts(id);
       const pc = aPieces(id, o);
       const plan = C.cheapPlan(gd, store, settings, id, Math.max(pc.pieces, gd.recipes[id].amount), o);
-      projects.unshift(projectFromAlch(id, o, plan)); saveProjects();
-      note(`📝 Gespeichert: ${S(plan.pieces)} × ${gd.label(id)}`);
+      saveRecipe(projectFromAlch(id, o, plan));
     });
 
     $("shop-share").addEventListener("click", () => shareText("Rezepte", renderShop.lastText || ""));

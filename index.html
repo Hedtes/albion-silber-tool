@@ -13,7 +13,7 @@
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="icon" type="image/png" href="icons/icon-64.png">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="stylesheet" href="style.css?v=1.8.0">
+<link rel="stylesheet" href="style.css?v=1.8.1">
 </head>
 <body>
 <header class="top">
@@ -36,7 +36,7 @@
       <input class="big num" id="s-budget" type="number" inputmode="numeric" min="0" step="100000" value="1000000">
       <div class="quick" id="s-quick"></div>
       <div class="grid" style="margin-top:10px">
-        <div class="field"><label style="color:var(--gold-lt)">Fokus verfügbar</label><input id="s-focus" type="number" inputmode="numeric" value="0"></div>
+        <div class="field"><label style="color:var(--gold-lt)">Fokus pro Tag</label><input id="s-focus" type="number" inputmode="numeric" value="10000"><div class="quick mini" id="s-fquick"></div></div>
         <div class="field"><label style="color:var(--gold-lt)">Fokus-Effizienz (FCE)</label><input id="s-fce" type="number" inputmode="numeric" value="0"></div>
       </div>
       <button class="btn primary block" id="s-run" style="margin-top:12px">🔍  Silber finden</button>
@@ -69,7 +69,8 @@
     <div class="muted small" id="s-info" style="margin:0 2px 8px"></div>
     <div class="list" id="s-plan"></div>
     <button class="btn primary block" id="s-shop" style="margin-top:12px;display:none">📝 Ganzen Plan als Rezepte speichern</button>
-    <h3 id="s-more-h" style="display:none;margin:20px 2px 8px;font-size:15px">Weitere Gelegenheiten</h3>
+    <h3 id="s-more-h" style="display:none;margin:20px 2px 4px;font-size:15px">✦ Bester Fokus-Einsatz</h3>
+    <div class="muted small" id="s-more-info" style="display:none;margin:0 2px 8px"></div>
     <div class="list" id="s-more"></div>
     <div class="list" id="s-ench"></div>
   </section>
@@ -489,7 +490,7 @@
 <div class="toast note" id="note"><span id="note-text"></span><button id="note-btn">Ansehen</button></div>
 <div class="toast" id="toast"><span id="toast-text"></span><button id="toast-btn">Neu laden</button></div>
 
-<script src="core.js?v=1.8.0"></script>
-<script src="app.js?v=1.8.0"></script>
+<script src="core.js?v=1.8.1"></script>
+<script src="app.js?v=1.8.1"></script>
 </body>
 </html>

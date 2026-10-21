@@ -289,3 +289,6 @@ body.no-hints .hint { display: none !important; }
   .quick button { padding: 7px 4px; }
   h3 { font-size: 14px; }
 }
+
+.quick.mini { margin-top: 6px; gap: 6px; }
+.quick.mini button { padding: 5px 4px; font-size: 12.5px; }

@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const C = window.Core;
-  const VERSION = "1.8.0";
+  const VERSION = "1.8.1";
   const $ = (id) => document.getElementById(id);
   const S = C.fmtSilver;
   const SLOW_DAYS = 7;
@@ -30,10 +30,11 @@
     cSell: C.AUTO_MARKET, cSellMode: "order", cFocus: false, cDaily: 0, cStation: 0,
     aKind: "potion", aBase: "T4_POTION_HEAL", aEnch: 0, aQty: 100, aInput: "qty", aBudget: 1000000, aCity: C.AUTO_CITY, aBuy: C.SAME_CITY,
     aSell: C.AUTO_MARKET, aSellMode: "order", aBuyMode: "instant", aDaily: 0, aFocus: false,
-    sMode: "safe", sBudget: 1000000, sFocus: 0, sFce: 0, sCity: "auto", sBuyMode: "instant", sChain: true,
+    sMode: "safe", sBudget: 1000000, sFocus: 10000, sFce: 0, sCity: "auto", sBuyMode: "instant", sChain: true,
     sMargin: 5, sDays: 1, sAge: 12, sGroups: ["Refining", "Tränke", "Essen", "Taschen & Umhänge", "Werkzeuge", "Sammlerausrüstung"], sTiers: [4, 5, 6, 7], sEnchs: [0, 1, 2, 3], sSellMode: "instant", sEnchUp: true,
   }, storage.get("ui", {}));
   const saveUi = () => storage.set("ui", ui);
+  if (!ui.sV3) { ui.sV3 = true; if (!Number(ui.sFocus)) ui.sFocus = 10000; saveUi(); }
   if (!ui.sV2) {   // Silber-Finder: einmalig auf die breiteren neuen Standardwerte setzen
     Object.assign(ui, { sV2: true, sMargin: 5, sAge: 12, sSellMode: "instant", sEnchUp: true,
       sGroups: ["Refining", "Tränke", "Essen", "Taschen & Umhänge", "Werkzeuge", "Sammlerausrüstung"], sTiers: [4, 5, 6, 7], sEnchs: [0, 1, 2, 3] });
@@ -641,9 +642,17 @@
       budget: Number(ui.sBudget) || 0, focus: Number(ui.sFocus) || 0, days: Number(ui.sDays) || 1, unknownCap: 0,
     });
     const usedIds = new Set(res.plan.map((p) => p.ev.id));
-    const more = items.filter((x) => !usedIds.has(x.id)).map((x) => x.nf || x.f).filter((ev) => ev && ev.profit > 0)
-      .map((ev) => ({ ev, perDay: ev.per_day ? ev.profit * Math.floor(ev.per_day / ev.rec.amount) : null }))
-      .sort((a, b) => (b.perDay || 0) - (a.perDay || 0)).slice(0, 20);
+    // Bester Fokus-Einsatz: wofür bringt dein Fokus pro Tag am meisten Silber?
+    const F = Number(ui.sFocus) || 0, days = Number(ui.sDays) || 1;
+    const more = F <= 0 ? [] : items.filter((x) => x.f && x.f.profit > 0 && x.f.focusCost > 0).map((x) => {
+      const ev = x.f;
+      const byFocus = Math.floor(F / ev.focusCost);
+      const vol = ev.per_day === null || ev.per_day === undefined ? null : Math.floor(ev.per_day * days / ev.rec.amount);
+      const crafts = vol === null ? byFocus : Math.min(byFocus, vol);
+      const base = x.nf ? Math.max(0, x.nf.profit) : 0;
+      return { ev, crafts, pieces: crafts * ev.rec.amount, profit: crafts * ev.profit, extra: crafts * (ev.profit - base),
+        spf: ev.profit / ev.focusCost, focusUsed: crafts * ev.focusCost, limited: vol !== null && vol < byFocus, unknownVol: vol === null };
+    }).filter((m) => m.crafts > 0).sort((a, b) => b.profit - a.profit).slice(0, 10);
     stats.noVolume = items.filter((x) => { const ev = x.nf || x.f; return ev && (ev.per_day === null || ev.per_day === undefined); }).length;
     const ench = esSilverEval().slice(0, 10);
     silver = { plan: res.plan, more, ench, stats, budgetLeft: res.budgetLeft, focusLeft: res.focusLeft, checked: ids.length, found: items.length, at: Date.now() };
@@ -711,6 +720,24 @@
     );
   }
 
+  function focusCard(m) {
+    const ev = m.ev, w = evWhere(ev);
+    const fact = (label, value, cls) => el("div", {}, el("b", {}, label), el("span", { class: "num " + (cls || "") }, value));
+    return el("div", { class: "stage good", on: { click: () => openInCraft({ ev, pieces: m.pieces }) } },
+      el("div", { class: "h" },
+        el("div", { class: "name" }, `${S(m.pieces)} × ${gd.label(ev.id)}`),
+        el("div", { class: "profit num pos" }, "+" + S(m.profit))),
+      el("div", { class: "where" }, w.text, w.transport ? el("span", { class: "warn" }, "  🐎 Transport durch rote Zone") : null),
+      el("div", { class: "facts" },
+        fact("Silber/Fokus", C.fmtNum(m.spf, m.spf < 10 ? 2 : 1), "pos"),
+        fact("Fokus", S(m.focusUsed)),
+        fact("dank Fokus", "+" + S(m.extra), "pos"),
+        fact("Marge", C.fmtNum(ev.margin) + " %", "pos"),
+        fact("Verk./Tag", m.unknownVol ? "?" : C.fmtNum(ev.per_day, ev.per_day < 10 ? 1 : 0))),
+      m.limited ? el("div", { class: "small warn", style: "margin-top:6px" }, `Begrenzt durch Verkäufe/Tag – restlicher Fokus für eine zweite Option nutzen`) : null,
+      m.unknownVol ? el("div", { class: "small warn", style: "margin-top:6px" }, "Verkaufszahlen unbekannt – Menge vorsichtig wählen") : null);
+  }
+
   function renderSilver() {
     renderSilverOpts();
     const t = $("s-tiles"), plan = $("s-plan"), more = $("s-more");
@@ -739,9 +766,15 @@
     }
     P.forEach((p) => plan.append(silverCard(p, true)));
     if (P.length) $("s-shop").style.display = "";
+    $("s-more-info").style.display = "none";
     if (silver.more.length) {
       $("s-more-h").style.display = "";
-      silver.more.forEach((m) => more.append(silverCard(m, false)));
+      $("s-more-info").style.display = "";
+      $("s-more-info").textContent = `Für ${S(Number(ui.sFocus) || 0)} Fokus${(Number(ui.sDays) || 1) !== 1 ? "" : " pro Tag"} · jeweils eine Option allein, sortiert nach Gewinn · Tippen öffnet den Rechner mit Fokus`;
+      silver.more.forEach((m) => more.append(focusCard(m)));
+    } else if ((Number(ui.sFocus) || 0) > 0) {
+      $("s-more-h").style.display = "";
+      more.append(el("div", { class: "small muted", style: "margin:0 2px" }, "Mit Fokus lohnt sich gerade nichts zusätzlich – Filter erweitern oder später erneut suchen."));
     }
     const eb = $("s-ench");
     eb.innerHTML = "";
@@ -2593,6 +2626,8 @@
       ui.sMode = b.dataset.m; if (ui.sMode === "bm" && !ui.sGroups.some((g) => ["Waffen", "Rüstung", "Nebenhand"].includes(g))) ui.sGroups.push("Waffen", "Rüstung");
       saveUi(); silver = null; renderSilver();
     }));
+    [[10000, "10 k"], [30000, "30 k"], [100000, "100 k"]].forEach(([v, l]) =>
+      $("s-fquick").append(el("button", { on: { click: () => { ui.sFocus = v; $("s-focus").value = v; saveUi(); } } }, l)));
     const sb = $("s-budget");
     sb.addEventListener("input", () => { ui.sBudget = sb.value; saveUi(); });
     [[500000, "500 k"], [1000000, "1 Mio"], [5000000, "5 Mio"], [10000000, "10 Mio"], [0, "∞"]].forEach(([v, l]) =>

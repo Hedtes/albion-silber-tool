@@ -222,3 +222,30 @@ table.res tr.click { cursor: pointer; }
 .ench-step .res td:first-child { white-space: normal; }
 #c-ench .seg button { font-size: 12.5px; padding: 8px 4px; }
 table.res tr.key td.pos { color: var(--pos); } table.res tr.key td.neg { color: var(--neg); }
+
+/* ---------- Rezepte */
+.howto { background: var(--panel2); border: 1px dashed var(--line); border-radius: 12px; padding: 10px 12px; margin-bottom: 12px; font-size: 13.5px; }
+.howto ol { margin: 6px 0 6px 18px; padding: 0; }
+.howto li { margin: 3px 0; }
+.proj { border-left: 4px solid var(--gold); }
+.proj.ready { border-left-color: var(--pos); }
+.proj-h { display: flex; gap: 10px; align-items: flex-start; }
+.proj-h .t { flex: 1; min-width: 0; }
+.proj-title { font-size: 17px; font-weight: 800; }
+.proj-sec { margin-top: 12px; font-weight: 800; font-size: 12px; letter-spacing: .06em; color: var(--gold-lt); text-transform: uppercase; }
+.proj-bar { height: 8px; background: var(--panel2); border-radius: 6px; overflow: hidden; margin: 10px 0 4px; }
+.proj-bar > div { height: 100%; background: var(--gold); }
+.proj.ready .proj-bar > div { background: var(--pos); }
+.chk { display: flex; gap: 10px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); }
+.chk:first-of-type { border-top: 0; }
+.chk label { display: flex; gap: 12px; align-items: center; flex: 1; min-width: 0; cursor: pointer; }
+.chk input[type=checkbox] { width: 26px; height: 26px; accent-color: var(--pos); flex: none; }
+.chk .t { flex: 1; min-width: 0; }
+.chk .n { font-weight: 700; }
+.chk.done .n { text-decoration: line-through; color: var(--muted); }
+.chk.done .tag { color: var(--pos); font-weight: 700; }
+.chk.have .n { color: var(--muted); }
+.proj-sum { background: var(--panel2); border-radius: 10px; padding: 8px 10px; margin-top: 8px; font-size: 13.5px; }
+.proj-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+.proj-btns .wide { grid-column: 1 / -1; }
+.toast.note { background: var(--pos); }

@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const C = window.Core;
-  const VERSION = "1.6.1";
+  const VERSION = "1.7.0";
   const $ = (id) => document.getElementById(id);
   const S = C.fmtSilver;
   const SLOW_DAYS = 7;
@@ -76,7 +76,7 @@
   async function runJobs(jobs, done) {
     if (busy) { setStatus("Es läuft bereits ein Abruf …"); return; }
     busy = true; abort = new AbortController();
-    $("load-btn").disabled = true; $("shop-reload").disabled = true; $("c-load").disabled = true; $("s-run").disabled = true; $("a-load").disabled = true; $("es-run").disabled = true;
+    $("load-btn").disabled = true; $("c-load").disabled = true; $("s-run").disabled = true; $("a-load").disabled = true; $("es-run").disabled = true;
     let errors = 0;
     try {
       for (let k = 0; k < jobs.length; k++) {
@@ -97,7 +97,7 @@
       setStatus("Fehler beim Abruf: " + (e.message || e), true);
     } finally {
       busy = false; progress(0, 0);
-      $("load-btn").disabled = false; $("shop-reload").disabled = false; $("c-load").disabled = false; $("s-run").disabled = false; $("a-load").disabled = false; $("es-run").disabled = false;
+      $("load-btn").disabled = false; $("c-load").disabled = false; $("s-run").disabled = false; $("a-load").disabled = false; $("es-run").disabled = false;
       if (done) await done();
     }
   }
@@ -619,10 +619,8 @@
   function silverToShop() {
     if (!silver || !silver.plan.length) return;
     addToShop(silver.plan.map((p) => ({ id: p.ev.id, crafts: p.crafts, city: p.ev.city, buy_city: p.ev.buyCity,
-      buy_mode: p.ev.buyMode, focus: p.ev.focus, daily: 0, sell_loc: p.ev.sellLoc, sell_mode: p.ev.sellMode })));
-    $("s-shop").textContent = "✔ Plan in der Einkaufsliste";
-    setTimeout(() => { $("s-shop").textContent = "🛒 Ganzen Plan zur Einkaufsliste"; }, 1800);
-  }
+      buy_mode: p.ev.buyMode, focus: p.ev.focus, daily: 0, sell_loc: p.ev.sellLoc, sell_mode: p.ev.sellMode })), "Silber-Finder");
+      }
 
   // ------------------------------------------------------------ Tränke & Essen (billigster Weg)
   let alchData = { alts: {}, names: {} };
@@ -1149,14 +1147,10 @@
     return { id: r.id, crafts: n, city: r.city, buy_city: r.buy_city, buy_mode: ui.buyMode, focus: ui.focus,
       daily: Number(ui.daily) || 0, sell_loc: r.sell_loc || r.city, sell_mode: r.sell_mode || ui.sellMode };
   }
-  function addToShop(entries) {
-    const keys = ["id", "city", "buy_city", "buy_mode", "focus", "sell_loc"];
-    for (const e of entries) {
-      const same = shop.find((x) => keys.every((k) => x[k] === e[k]));
-      if (same) same.crafts += e.crafts; else shop.push(e);
-    }
-    saveShop();
-    setStatus(`🛒 ${entries.length} Eintrag/Einträge zur Einkaufsliste hinzugefügt`);
+  function addToShop(entries, src) {
+    entries.forEach((e) => { if (gd.recipes[e.id]) projects.unshift(projectFromEntry(e, src || "Rechner")); });
+    saveProjects();
+    note(entries.length === 1 ? `📝 Rezept gespeichert: ${S(projects[0].pieces)} × ${gd.label(projects[0].id)}` : `📝 ${entries.length} Rezepte gespeichert`);
   }
 
   /** Ein Eintrag der Einkaufsliste – funktioniert für jedes Rezept (Refining, Tränke, Gear …). */
@@ -1178,64 +1172,190 @@
     return { rec, plan, profit: res.complete ? res.profit : null, buyCost, revenue: res.complete ? res.revenue : null, best };
   }
 
-  function renderShop() {
-    const ent = $("shop-entries"), mats = $("shop-mats");
-    ent.innerHTML = ""; mats.innerHTML = "";
-    let totalCost = 0, totalProfit = 0, complete = true, pieces = 0;
-    const agg = {};
-    shop.forEach((e, i) => {
-      if (!gd.recipes[e.id]) return;
-      const k = shopCalc(e);
-      pieces += e.crafts * k.rec.amount;
-      if (k.profit !== null) totalProfit += k.profit; else complete = false;
-      for (const pl of k.plan) {
-        const key = pl.id + "|" + e.buy_city;
-        const a = (agg[key] = agg[key] || { id: pl.id, city: e.buy_city, n: 0, cost: 0, missing: false });
-        a.n += pl.buy;
-        if (pl.price === null) a.missing = true; else a.cost += pl.buy * pl.price;
-      }
-      const amt = k.rec.amount;
-      ent.append(el("div", { class: "shop-item" },
-        el("button", { class: "icon-btn", title: "Gecraftet – abhaken", style: "border-color:var(--pos);color:var(--pos)", on: { click: () => {
-          if (logCraft({ id: e.id, pieces: e.crafts * amt, cost: k.buyCost, expected: k.revenue, where: `${e.city} → ${e.sell_loc}`,
-            price: k.best ? k.best.price : null, loc: e.sell_loc, mode: e.sell_mode })) {
-            shop.splice(i, 1); saveShop(); renderShop();
-          }
-        } } }, "✓"),
-        el("div", { class: "t" },
-          el("div", { style: "font-weight:700" }, `${S(e.crafts * amt)} × ${gd.label(e.id)}`),
-          el("div", { class: "small muted" }, (amt > 1 ? `${S(e.crafts)} Crafts · ` : "") +
-            `${e.city}${e.buy_city !== e.city ? " · Kauf " + e.buy_city : ""} → ${e.sell_loc}${e.focus ? " · ✦ Fokus" : ""}`)),
-        el("div", { class: "num " + (k.profit !== null ? (k.profit > 0 ? "pos" : "neg") : "muted") },
-          k.profit !== null ? S(k.profit) : "Preise fehlen"),
-        el("button", { class: "icon-btn", on: { click: () => {
-          const v = window.prompt(`Stückzahl (0 = entfernen)${amt > 1 ? " – " + amt + " Stück pro Craft" : ""}`, String(e.crafts * amt));
-          if (v === null) return;
-          const n = Math.floor(Number(v.replace(/[.\s]/g, "")) || 0);
-          if (n <= 0) shop.splice(i, 1); else e.crafts = C.craftsFor(k.rec, n);
-          saveShop(); renderShop();
-        } } }, "✎"),
-      ));
-    });
-    if (!shop.length) ent.append(el("div", { class: "empty" }, "Noch leer. Im Refining- oder Crafting-Rechner „Zur Einkaufsliste“ tippen."));
-    const list = Object.values(agg).sort((a, b) => a.city.localeCompare(b.city) || b.cost - a.cost);
-    for (const a of list) {
-      if (a.missing) complete = false; else totalCost += a.cost;
-      mats.append(el("div", { class: "shop-item" },
-        el("div", { class: "t" }, el("div", { style: "font-weight:700" }, `${S(a.n)} × ${gd.label(a.id)}`),
-          el("div", { class: "small muted" }, a.city)),
-        el("div", { class: "num" }, a.missing ? "Preis fehlt" : S(a.cost))));
+  // ------------------------------------------------------------ Rezepte (gespeicherte Crafts mit Einkaufs-Checkliste)
+  let projects = storage.get("projects", []);
+  const saveProjects = () => storage.set("projects", projects);
+  const pad2 = (n) => String(n).padStart(2, "0");
+  const fmtWhen = (ts) => { const d = new Date(ts); return `${dayLabel(dayKey(ts))} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
+  let noteTimer = null;
+  function note(text) {
+    $("note-text").textContent = text;
+    $("note").classList.add("on");
+    $("note-btn").onclick = () => { $("note").classList.remove("on"); ui.listPane = "shop"; show("shop"); };
+    clearTimeout(noteTimer); noteTimer = setTimeout(() => $("note").classList.remove("on"), 5000);
+  }
+  const mat = (item, need, have, buy, unit, cost, city) => ({ item, need, have: have || 0, buy: Math.max(0, buy), unit, cost, city, done: buy <= 0, paid: null });
+
+  function projectFromCraft(k) {
+    return { uid: uid(), at: Date.now(), src: "Crafting", id: ui.cItem, pieces: k.crafts * k.rec.amount, crafts: k.crafts,
+      city: k.city, buyCity: k.buy, sellLoc: k.sellLoc, sellMode: k.mode, focus: !!ui.cFocus,
+      mats: k.plan.map((pl) => mat(pl.id, pl.buy, pl.fromStock, pl.buyNet, pl.price, pl.cost, k.buy)), steps: [],
+      cost: k.buyCost, price: k.best ? k.best.price : null,
+      revenue: k.res.complete ? k.res.revenue : null, profit: k.res.complete ? k.res.profit : null };
+  }
+  function projectFromAlch(id, o, plan) {
+    const steps = plan.steps.slice().sort((a, b) => b.depth - a.depth)
+      .map((st) => ({ item: st.item, out: st.out, crafts: st.crafts, from: st.alt.res.map((x) => x[0]), done: false }));
+    const sellLoc = plan.best ? plan.best.loc : o.sellLocs[0];
+    return { uid: uid(), at: Date.now(), src: "Tränke & Essen", id, pieces: plan.pieces, crafts: plan.crafts,
+      city: o.city, buyCity: o.buyCity, sellLoc, sellMode: plan.best ? plan.best.mode : o.sellMode, focus: !!o.focus,
+      mats: plan.buyList.map((it) => mat(it.item, it.qty, it.fromStock, it.buy, it.price, it.cost, o.buyCity)), steps,
+      cost: plan.buyCost, price: plan.best ? plan.best.price : null,
+      revenue: plan.complete ? plan.res.revenue : null, profit: plan.complete ? plan.res.profit : null };
+  }
+  function projectFromEntry(e, src) {
+    const k = shopCalc(e);
+    return { uid: uid(), at: Date.now(), src, id: e.id, pieces: e.crafts * k.rec.amount, crafts: e.crafts,
+      city: e.city, buyCity: e.buy_city, sellLoc: e.sell_loc, sellMode: e.sell_mode, focus: !!e.focus,
+      mats: k.plan.map((pl) => mat(pl.id, pl.buy, 0, pl.buy, pl.price, pl.price === null ? null : pl.buy * pl.price, e.buy_city)), steps: [],
+      cost: k.buyCost, price: k.best ? k.best.price : null, revenue: k.revenue, profit: k.profit };
+  }
+  const matCost = (m) => m.paid !== null && m.paid !== undefined ? m.paid : m.cost;
+  const toBuy = (p) => p.mats.filter((m) => m.buy > 0);
+
+  function finishProject(p) {
+    const open = toBuy(p).filter((m) => !m.done).length;
+    if (open && !confirm(`Es sind noch ${open} Material(ien) nicht als gekauft abgehakt.\nTrotzdem als fertig ins Buch eintragen?`)) return;
+    const spent = toBuy(p).reduce((a, m) => a + (matCost(m) || 0), 0);
+    if (!logCraft({ id: p.id, pieces: p.pieces, cost: Math.round(spent), expected: p.revenue, where: `${p.city} → ${p.sellLoc}`,
+      price: p.price, loc: p.sellLoc, mode: p.sellMode })) return;
+    const used = {}; p.mats.forEach((m) => { if (m.have) used[m.item] = m.have; });
+    consumeStock(used);
+    projects = projects.filter((x) => x !== p); saveProjects(); renderShop();
+  }
+  function openProject(p) {
+    const r = gd.recipes[p.id]; if (!r) return;
+    if (p.src === "Tränke & Essen") {
+      Object.assign(ui, { aKind: r.cat === "food" ? "food" : "potion", aBase: p.id.split("@")[0], aEnch: r.ench, aInput: "qty", aQty: p.pieces });
+      saveUi(); show("alch");
+    } else {
+      Object.assign(ui, { cItem: p.id, cQty: p.pieces, cGroup: r.group }); saveUi(); show("craft");
     }
+  }
+  function projectText(p) {
+    const lines = toBuy(p).map((m) => `${m.done ? "✔" : "☐"} ${S(m.buy)} × ${gd.label(m.item)} (${m.city})${matCost(m) !== null ? " – " + S(matCost(m)) : ""}`);
+    const steps = p.steps.map((st) => `${st.done ? "✔" : "☐"} ${S(st.out)} × ${gd.label(st.item)} herstellen`);
+    return `${S(p.pieces)} × ${gd.label(p.id)} – Craften in ${p.city}\n\nEinkaufen:\n${lines.join("\n") || "nichts"}` +
+      (steps.length ? `\n\nZwischenprodukte:\n${steps.join("\n")}` : "") + `\n\nEinkauf ca. ${S(p.cost)} Silber`;
+  }
+  async function shareText(title, text) {
+    try {
+      if (navigator.share) await navigator.share({ title, text });
+      else { await navigator.clipboard.writeText(text); setStatus("Kopiert"); }
+    } catch (e) { /* abgebrochen */ }
+  }
+
+  function projectCard(p) {
+    const buys = toBuy(p), done = buys.filter((m) => m.done).length;
+    const ready = done === buys.length;
+    const rest = buys.filter((m) => !m.done).reduce((a, m) => a + (m.cost || 0), 0);
+    const restMissing = buys.some((m) => !m.done && m.cost === null);
+    const card = el("div", { class: "card proj" + (ready ? " ready" : "") });
+    card.append(
+      el("div", { class: "proj-h" },
+        el("div", { class: "t" },
+          el("div", { class: "proj-title" }, `${S(p.pieces)} × ${gd.label(p.id)}`),
+          el("div", { class: "small muted" }, `aus ${p.src} · gespeichert ${fmtWhen(p.at)}`),
+          el("div", { class: "small" }, `Craften in ${p.city}${p.focus ? " mit Fokus" : ""} · Einkauf in ${p.buyCity} · Verkauf in ${p.sellLoc}`)),
+        el("button", { class: "icon-btn", title: "Rezept löschen", on: { click: () => {
+          if (confirm(`Rezept „${S(p.pieces)} × ${gd.label(p.id)}“ löschen?\n(Im Buch wird nichts eingetragen.)`)) { projects = projects.filter((x) => x !== p); saveProjects(); renderShop(); }
+        } } }, "🗑")),
+      el("div", { class: "proj-bar" }, el("div", { style: `width:${buys.length ? done / buys.length * 100 : 100}%` })),
+      el("div", { class: "small " + (ready ? "pos" : "") }, ready ? "✔ Alles gekauft – jetzt craften" :
+        `${done} von ${buys.length} Materialien gekauft · noch ca. ${S(rest)}${restMissing ? " *" : ""} Silber`),
+    );
+    // 1 · Einkaufen
+    card.append(el("div", { class: "proj-sec" }, "1 · Einkaufen"));
+    for (const m of p.mats) {
+      if (m.buy <= 0) {
+        card.append(el("div", { class: "chk have" }, el("div", { class: "t" },
+          el("div", { class: "n" }, `✔ ${S(m.need)} × ${gd.label(m.item)}`),
+          el("div", { class: "small gold" }, "hast du schon im Lager – nichts kaufen"))));
+        continue;
+      }
+      const cb = el("input", { type: "checkbox", checked: !!m.done, on: { change: () => { m.done = cb.checked; saveProjects(); renderShop(); } } });
+      card.append(el("div", { class: "chk" + (m.done ? " done" : "") },
+        el("label", {}, cb, el("div", { class: "t" },
+          el("div", { class: "n" }, `${S(m.buy)} × ${gd.label(m.item)}`),
+          el("div", { class: "small muted" }, `${m.city} · ${m.unit === null ? "Preis fehlt" : "ca. " + S(m.unit) + " pro Stück"}` +
+            (m.have ? ` · dazu ${S(m.have)} aus dem Lager` : "")),
+          m.done ? el("div", { class: "small tag" }, m.paid !== null ? `✔ gekauft für ${S(m.paid)}` : "✔ gekauft") : null)),
+        el("div", { class: "num", style: "font-weight:700;text-align:right" }, matCost(m) === null ? "–" : S(matCost(m))),
+        el("button", { class: "icon-btn", title: "Bezahlten Preis eintragen", on: { click: () => {
+          const v = askSilver(`${S(m.buy)} × ${gd.label(m.item)}\n\nWas hast du insgesamt bezahlt? (Silber)`, matCost(m));
+          if (v === null) return;
+          m.paid = v; m.done = true; saveProjects(); renderShop();
+        } } }, "✎")));
+    }
+    // 2 · Zwischenprodukte
+    if (p.steps.length) {
+      card.append(el("div", { class: "proj-sec" }, "2 · Zwischenprodukte herstellen"));
+      for (const st of p.steps) {
+        const cb = el("input", { type: "checkbox", checked: !!st.done, on: { change: () => { st.done = cb.checked; saveProjects(); renderShop(); } } });
+        card.append(el("div", { class: "chk" + (st.done ? " done" : "") }, el("label", {}, cb, el("div", { class: "t" },
+          el("div", { class: "n" }, `${S(st.out)} × ${gd.label(st.item)} herstellen`),
+          el("div", { class: "small muted" }, `${S(st.crafts)} Crafts` + (st.from && st.from.length ? ` · aus ${st.from.map((x) => gd.label(x)).join(" + ")}` : ""))))));
+      }
+    }
+    // 3 · Craften
+    const spent = buys.filter((m) => m.done).reduce((a, m) => a + (matCost(m) || 0), 0);
+    card.append(el("div", { class: "proj-sec" }, `${p.steps.length ? 3 : 2} · Craften & verkaufen`),
+      el("div", { class: "proj-sum" },
+        el("div", {}, el("b", {}, `${S(p.crafts)} Crafts → ${S(p.pieces)} × ${gd.label(p.id)}`), ` in ${p.city}`),
+        el("div", { class: "small" }, `Einkauf geplant ${S(p.cost)} · schon ausgegeben ${S(spent)}`),
+        el("div", { class: "small" }, `Verkauf geplant: ${p.sellLoc}${p.price ? " · ca. " + S(p.price) + " pro Stück" : ""}`),
+        p.profit !== null ? el("div", { class: "small" }, "Erwarteter Gewinn: ",
+          el("b", { class: p.profit > 0 ? "pos" : "neg" }, `${p.profit > 0 ? "+" : ""}${S(p.profit)} Silber`)) : null),
+      el("div", { class: "proj-btns" },
+        el("button", { class: "btn primary wide", on: { click: () => finishProject(p) } }, "✔ Fertig gecraftet – ins Buch"),
+        el("button", { class: "btn", on: { click: () => openProject(p) } }, "🧮 Im Rechner öffnen"),
+        el("button", { class: "btn", on: { click: () => shareText("Rezept", projectText(p)) } }, "Teilen")));
+    return card;
+  }
+
+  function renderShop() {
+    const box = $("proj-list");
+    if (!box) return;
+    box.innerHTML = "";
+    projects = projects.filter((p) => gd.recipes[p.id]);
+    if (!projects.length) box.append(el("div", { class: "card empty" }, "Noch keine Rezepte gespeichert.",
+      el("div", { class: "small", style: "margin-top:6px" }, "Im Crafting- oder Tränke-Rechner unten auf „📝 Rezept speichern“ tippen.")));
+    projects.forEach((p) => box.append(projectCard(p)));
+    // Alles zusammen (nur wenn mehrere Rezepte)
+    const agg = {};
+    projects.forEach((p) => toBuy(p).filter((m) => !m.done).forEach((m) => {
+      const k = m.item + "|" + m.city;
+      const a = (agg[k] = agg[k] || { item: m.item, city: m.city, n: 0, cost: 0, miss: false, refs: [] });
+      a.n += m.buy; if (m.cost === null) a.miss = true; else a.cost += m.cost; a.refs.push(m);
+    }));
+    const list = Object.values(agg).sort((a, b) => a.city.localeCompare(b.city) || b.cost - a.cost);
+    const all = $("proj-all");
+    all.innerHTML = "";
+    all.style.display = projects.length > 1 && list.length ? "" : "none";
+    if (projects.length > 1 && list.length) {
+      all.append(el("b", {}, "🛒 Alles zusammen einkaufen"),
+        el("div", { class: "small muted", style: "margin:2px 0 4px" }, "Noch offen aus allen Rezepten. Abhaken hakt es in jedem Rezept ab."));
+      let city = null;
+      for (const a of list) {
+        if (a.city !== city) { city = a.city; all.append(el("div", { class: "proj-sec" }, city)); }
+        const cb = el("input", { type: "checkbox", on: { change: () => { a.refs.forEach((m) => { m.done = true; }); saveProjects(); renderShop(); } } });
+        all.append(el("div", { class: "chk" }, el("label", {}, cb, el("div", { class: "t" },
+          el("div", { class: "n" }, `${S(a.n)} × ${gd.label(a.item)}`),
+          el("div", { class: "small muted" }, `für ${a.refs.length} Rezept(e)`))),
+          el("div", { class: "num", style: "font-weight:700" }, a.miss ? "–" : S(a.cost))));
+      }
+    }
+    const openCost = list.reduce((x, a) => x + a.cost, 0);
+    const profit = projects.reduce((x, p) => x + (p.profit || 0), 0);
     const t = $("shop-tiles");
     t.innerHTML = "";
     t.append(
-      tile(S(pieces), "Stück in der Liste"),
-      tile(S(totalCost) + (complete ? "" : " *"), "Einkauf gesamt"),
-      tile(shop.length ? S(totalProfit) : "–", "erwarteter Gewinn", totalProfit > 0 ? "good" : shop.length ? "bad" : ""),
-      tile(String(list.length), "Materialien"),
+      tile(String(projects.length), "gespeicherte Rezepte"),
+      tile(S(openCost), "noch einzukaufen (Silber)"),
+      tile(String(list.reduce((x, a) => x + a.refs.length, 0)), "Materialien offen"),
+      tile(projects.length ? S(profit) : "–", "erwarteter Gewinn", profit > 0 ? "good" : projects.length ? "bad" : ""),
     );
-    renderShop.lastText = "Einkaufsliste – Albion Silber Tool\n\n" + list.map((a) => `${S(a.n)} × ${gd.label(a.id)} (${a.city})${a.missing ? "" : " – " + S(a.cost) + " Silber"}`).join("\n") +
-      `\n\nEinkauf gesamt: ${S(totalCost)} Silber`;
+    renderShop.lastText = projects.map(projectText).join("\n\n――――――――――\n\n");
   }
 
   // ------------------------------------------------------------ Buch (gecraftet / verkauft / Ausgaben / Einnahmen)
@@ -2095,7 +2215,7 @@
     $("calc-shop").addEventListener("click", () => {
       const r = calcRow(); if (!r) return;
       const n = calcAmount(r, ui.focus);
-      if (n > 0) { addToShop([shopEntry(r, n)]); $("calc-shop").textContent = "✔ Zur Einkaufsliste hinzugefügt"; setTimeout(() => { $("calc-shop").textContent = "🛒 Diese Menge zur Einkaufsliste"; }, 1800); }
+      if (n > 0) { addToShop([shopEntry(r, n)], "Refining"); }
     });
 
     // Liste / Buch
@@ -2221,34 +2341,20 @@
     $("c-all-live").addEventListener("click", () => { const k = craftCalc(); if (k) resetCraftPrices(k.plan.map((p) => p.id).concat(["prod"])); });
     $("c-shop").addEventListener("click", () => {
       const k = craftCalc(); if (!k) return;
-      addToShop([{ id: ui.cItem, crafts: k.crafts, city: k.city, buy_city: k.buy, buy_mode: ui.cBuyMode, focus: ui.cFocus,
-        daily: Number(ui.cDaily) || 0, sell_loc: k.sellLoc, sell_mode: k.mode, station: Number(ui.cStation) || 0 }]);
-      $("c-shop").textContent = "✔ Zur Einkaufsliste hinzugefügt";
-      setTimeout(() => { $("c-shop").textContent = "🛒 Zur Einkaufsliste"; }, 1800);
+      projects.unshift(projectFromCraft(k)); saveProjects();
+      note(`📝 Gespeichert: ${S(projects[0].pieces)} × ${gd.label(ui.cItem)}`);
+    });
+    $("a-save").addEventListener("click", () => {
+      const id = aId(); if (!id) return;
+      const o = aOpts(id);
+      const pc = aPieces(id, o);
+      const plan = C.cheapPlan(gd, store, settings, id, Math.max(pc.pieces, gd.recipes[id].amount), o);
+      projects.unshift(projectFromAlch(id, o, plan)); saveProjects();
+      note(`📝 Gespeichert: ${S(plan.pieces)} × ${gd.label(id)}`);
     });
 
-    $("shop-reload").addEventListener("click", () => {
-      const buy = {}, sell = {}, hist = {};
-      for (const e of shop) {
-        const rec = gd.recipes[e.id]; if (!rec) continue;
-        (buy[e.buy_city] = buy[e.buy_city] || new Set());
-        rec.res.forEach((x) => buy[e.buy_city].add(x[0]));
-        (sell[e.sell_loc] = sell[e.sell_loc] || new Set()).add(e.id);
-        (hist[e.sell_loc] = hist[e.sell_loc] || new Set()).add(e.id);
-      }
-      const jobs = Object.entries(buy).map(([c, s]) => [[...s], [c]])
-        .concat(Object.entries(sell).map(([c, s]) => [[...s], [c]]))
-        .concat(Object.entries(hist).map(([c, s]) => [[...s], [c], "history"]));
-      runJobs(jobs, () => { renderShop(); render(); });
-    });
-    $("shop-share").addEventListener("click", async () => {
-      const text = renderShop.lastText || "";
-      try {
-        if (navigator.share) await navigator.share({ title: "Einkaufsliste", text });
-        else { await navigator.clipboard.writeText(text); setStatus("Einkaufsliste kopiert"); }
-      } catch (e) { /* abgebrochen */ }
-    });
-    $("shop-clear").addEventListener("click", () => { if (shop.length && confirm("Einkaufsliste leeren?")) { shop = []; saveShop(); renderShop(); } });
+    $("shop-share").addEventListener("click", () => shareText("Rezepte", renderShop.lastText || ""));
+    $("shop-clear").addEventListener("click", () => { if (projects.length && confirm("Alle gespeicherten Rezepte löschen?\n(Im Buch wird nichts eingetragen.)")) { projects = []; saveProjects(); renderShop(); } });
 
     $("clear-manual").addEventListener("click", () => { if (confirm("Alle manuellen Preise löschen?")) { store.clearManual(); render(); } });
     $("clear-cache").addEventListener("click", () => { if (confirm("Gespeicherte Preise löschen?")) { store.live = {}; store.history = {}; store.save(); render(); } });
@@ -2294,6 +2400,10 @@
     } catch (e) {
       setStatus("Rezeptdaten konnten nicht geladen werden: " + e.message, true);
       return;
+    }
+    if (shop.length) {  // alte Einkaufsliste in Rezepte umwandeln
+      shop.filter((e) => gd.recipes[e.id]).forEach((e) => projects.push(projectFromEntry(e, "alte Einkaufsliste")));
+      shop = []; saveShop(); saveProjects();
     }
     render();
     esWire(); esRender();

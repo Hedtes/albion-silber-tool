@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const C = window.Core;
-  const VERSION = "1.3.2";
+  const VERSION = "1.4.0";
   const $ = (id) => document.getElementById(id);
   const S = C.fmtSilver;
   const SLOW_DAYS = 7;
@@ -285,7 +285,7 @@
     if ($("calc").classList.contains("on")) renderCalc();
     if (ui.view === "craft") renderCraft();
     if (ui.view === "alch") renderAlch();
-    if (ui.view === "shop") renderShop();
+    if (ui.view === "shop") { if ((ui.listPane || "shop") === "book") renderBook(); else renderShop(); }
     $("premium-badge").textContent = settings.premium ? "★ Premium · 4 %" : "ohne Premium · 8 %";
   }
 
@@ -1132,7 +1132,8 @@
     const best = C.bestSale(store, settings, e.id, [e.sell_loc], e.sell_mode);
     const res = C.calcCraft(rec, e.crafts, rrr, prices, best ? best.price : null,
       C.sellFee(settings, best ? best.mode : e.sell_mode), e.station || 0, e.focus);
-    return { rec, plan, profit: res.complete ? res.profit : null };
+    const buyCost = plan.every((pl) => pl.price !== null) ? plan.reduce((a, pl) => a + pl.buy * pl.price, 0) : null;
+    return { rec, plan, profit: res.complete ? res.profit : null, buyCost, revenue: res.complete ? res.revenue : null, best };
   }
 
   function renderShop() {
@@ -1153,6 +1154,12 @@
       }
       const amt = k.rec.amount;
       ent.append(el("div", { class: "shop-item" },
+        el("button", { class: "icon-btn", title: "Gecraftet – abhaken", style: "border-color:var(--pos);color:var(--pos)", on: { click: () => {
+          if (logCraft({ id: e.id, pieces: e.crafts * amt, cost: k.buyCost, expected: k.revenue, where: `${e.city} → ${e.sell_loc}`,
+            price: k.best ? k.best.price : null, loc: e.sell_loc, mode: e.sell_mode })) {
+            shop.splice(i, 1); saveShop(); renderShop();
+          }
+        } } }, "✓"),
         el("div", { class: "t" },
           el("div", { style: "font-weight:700" }, `${S(e.crafts * amt)} × ${gd.label(e.id)}`),
           el("div", { class: "small muted" }, (amt > 1 ? `${S(e.crafts)} Crafts · ` : "") +
@@ -1187,6 +1194,266 @@
     );
     renderShop.lastText = "Einkaufsliste – Albion Silber Tool\n\n" + list.map((a) => `${S(a.n)} × ${gd.label(a.id)} (${a.city})${a.missing ? "" : " – " + S(a.cost) + " Silber"}`).join("\n") +
       `\n\nEinkauf gesamt: ${S(totalCost)} Silber`;
+  }
+
+  // ------------------------------------------------------------ Buch (gecraftet / verkauft / Ausgaben / Einnahmen)
+  let book = storage.get("book", []);
+  for (const e of book) {  // älteres Format (ein Verkauf) in Teilverkäufe umwandeln
+    if (e.type === "craft" && !e.sales) {
+      e.sales = e.sold !== null && e.sold !== undefined ? [{ pieces: e.pieces, amount: e.sold, loc: "", mode: "", at: e.soldAt }] : [];
+      delete e.sold; delete e.soldAt;
+    }
+  }
+  const saveBook = () => storage.set("book", book);
+  const soldPieces = (e) => (e.sales || []).reduce((a, x) => a + x.pieces, 0);
+  const soldAmount = (e) => (e.sales || []).reduce((a, x) => a + x.amount, 0);
+  const restPieces = (e) => Math.max(0, e.pieces - soldPieces(e));
+  const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  const dayKey = (ts) => { const d = new Date(ts); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+  function dayLabel(key) {
+    const today = dayKey(Date.now()), yest = dayKey(Date.now() - 86400000);
+    const [y, m, d] = key.split("-").map(Number);
+    const dt = new Date(y, m - 1, d);
+    const wd = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"][dt.getDay()];
+    const base = `${wd} ${String(d).padStart(2, "0")}.${String(m).padStart(2, "0")}.`;
+    return key === today ? "Heute · " + base : key === yest ? "Gestern · " + base : base;
+  }
+  const askSilver = (text, def) => {
+    const v = window.prompt(text, def === null || def === undefined ? "" : String(Math.round(def)));
+    if (v === null) return null;
+    const n = Number(v.replace(/[.\s]/g, "").replace(",", "."));
+    return isNaN(n) ? null : Math.max(0, Math.round(n));
+  };
+
+  /** Einen Craft ins Buch eintragen (Einkauf jetzt, Erlös später beim Verkauf). */
+  function logCraft({ id, pieces, cost, expected, where, price, loc, mode }) {
+    const c = askSilver(`${S(pieces)} × ${gd.label(id)} gecraftet.\n\nWas hast du dafür ausgegeben? (Silber – mit deinen eigenen Preisen vorausgefüllt)`, cost);
+    if (c === null) return false;
+    book.push({ uid: uid(), type: "craft", id, label: gd.label(id), pieces, cost: c, expected: expected || null,
+      where: where || "", at: Date.now(), sales: [], price: price || null, loc: loc || "", mode: mode || "order" });
+    saveBook();
+    setStatus(`📒 Ins Buch eingetragen: ${S(pieces)} × ${gd.label(id)}`);
+    return true;
+  }
+
+  let saleEntry = null, saleTotalTouched = false;
+  function sellEntry(e) {
+    saleEntry = e; saleTotalTouched = false;
+    $("sale-title").textContent = `Verkauf: ${e.label}`;
+    const rest = restPieces(e);
+    $("sale-info").textContent = `${S(e.pieces)} gecraftet · ${S(soldPieces(e))} schon verkauft · noch ${S(rest)} übrig · Einkauf war ${S(e.cost)}`;
+    const sel = $("sale-loc");
+    sel.innerHTML = "";
+    C.MARKETS.forEach((m) => sel.append(el("option", { value: m, textContent: m })));
+    const last = (e.sales || []).length ? e.sales[e.sales.length - 1] : null;
+    sel.value = (last && last.loc) || e.loc || C.CITIES[0];
+    $("sale-mode").value = (last && last.mode) || e.mode || "order";
+    $("sale-pieces").value = rest || e.pieces;
+    const [lp] = store.get(e.id, sel.value, $("sale-mode").value === "instant" ? "buy" : "sell");
+    $("sale-price").value = Math.round((last && last.unit) || lp || e.price || 0);
+    saleCalc();
+    $("sale-sheet").classList.add("on");
+    document.body.style.overflow = "hidden";
+  }
+  function saleCalc() {
+    const n = Math.max(0, Number($("sale-pieces").value) || 0), pr = Math.max(0, Number($("sale-price").value) || 0);
+    const fee = C.sellFee(settings, $("sale-mode").value);
+    const net = Math.round(n * pr * (1 - fee));
+    if (!saleTotalTouched) $("sale-total").value = net;
+    $("sale-calc").textContent = `${S(n)} × ${S(pr)} = ${S(n * pr)} brutto · − ${C.fmtNum(fee * 100)} % Steuer/Gebühr = ${S(net)} netto`;
+  }
+  function saveSale() {
+    const e = saleEntry; if (!e) return;
+    const n = Math.max(0, Math.floor(Number($("sale-pieces").value) || 0));
+    const total = Math.max(0, Math.round(Number($("sale-total").value) || 0));
+    if (!n) { alert("Bitte Stückzahl eingeben."); return; }
+    if (n > restPieces(e) && !confirm(`Mehr als übrig (${S(restPieces(e))}) – trotzdem speichern?`)) return;
+    e.sales.push({ pieces: n, amount: total, unit: Math.max(0, Number($("sale-price").value) || 0),
+      loc: $("sale-loc").value, mode: $("sale-mode").value, at: Date.now() });
+    saveBook(); closeSale(); renderBook();
+    setStatus(`💰 Verkauf gespeichert: ${S(n)} × ${e.label} in ${$("sale-loc").value}`);
+  }
+  function closeSale() { $("sale-sheet").classList.remove("on"); document.body.style.overflow = ""; saleEntry = null; }
+
+  function bookEvents() {
+    // jede Buchung als Tages-Ereignis: Ausgabe am Craft-Tag, Einnahme am Verkaufs-Tag
+    const ev = [];
+    for (const e of book) {
+      if (e.type === "craft") {
+        ev.push({ day: dayKey(e.at), at: e.at, kind: "craft", e, amount: -e.cost });
+        (e.sales || []).forEach((sl, i) => ev.push({ day: dayKey(sl.at), at: sl.at, kind: "sale", e, sale: sl, idx: i, amount: sl.amount }));
+      } else {
+        ev.push({ day: dayKey(e.at), at: e.at, kind: e.type, e, amount: e.type === "expense" ? -e.amount : e.amount });
+      }
+    }
+    return ev.sort((a, b) => b.at - a.at);
+  }
+
+  function renderBookChart(byDay) {
+    const days = [];
+    for (let i = 13; i >= 0; i--) days.push(dayKey(Date.now() - i * 86400000));
+    const vals = days.map((d) => (byDay[d] ? byDay[d].inc - byDay[d].exp : 0));
+    const max = Math.max(1, ...vals.map(Math.abs));
+    const W = 320, H = 120, mid = H / 2, bw = W / days.length;
+    let bars = "";
+    vals.forEach((v, i) => {
+      const h = Math.abs(v) / max * (mid - 8);
+      const y = v >= 0 ? mid - h : mid;
+      const col = v > 0 ? "var(--pos)" : v < 0 ? "var(--neg)" : "var(--line)";
+      bars += `<rect x="${i * bw + 3}" y="${y}" width="${bw - 6}" height="${Math.max(1, h)}" rx="2" fill="${col}"><title>${dayLabel(days[i])}: ${S(v)}</title></rect>`;
+      if (i % 2 === 1 || i === days.length - 1) bars += `<text x="${i * bw + bw / 2}" y="${H - 1}" font-size="8" text-anchor="middle" fill="var(--muted)">${days[i].slice(8)}.</text>`;
+    });
+    $("book-chart").innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Gewinn pro Tag">` +
+      `<line x1="0" x2="${W}" y1="${mid}" y2="${mid}" stroke="var(--line)"/>${bars}</svg>`;
+  }
+
+  function renderBook() {
+    const ev = bookEvents();
+    const byDay = {};
+    for (const x of ev) {
+      const d = (byDay[x.day] = byDay[x.day] || { exp: 0, inc: 0, list: [] });
+      if (x.amount < 0) d.exp += -x.amount; else d.inc += x.amount;
+      d.list.push(x);
+    }
+    const today = dayKey(Date.now());
+    const sumRange = (n) => { let t = 0; for (let i = 0; i < n; i++) { const d = byDay[dayKey(Date.now() - i * 86400000)]; if (d) t += d.inc - d.exp; } return t; };
+    const open = book.filter((e) => e.type === "craft" && restPieces(e) > 0);
+    const openExp = open.reduce((a, e) => a + (e.expected ? e.expected * restPieces(e) / e.pieces : 0), 0);
+    const total = ev.reduce((a, x) => a + x.amount, 0);
+    const t = $("book-tiles");
+    t.innerHTML = "";
+    const cls = (v) => (v > 0 ? "good" : v < 0 ? "bad" : "");
+    const td = byDay[today] ? byDay[today].inc - byDay[today].exp : 0;
+    t.append(tile(S(td), "Saldo heute", cls(td)), tile(S(sumRange(7)), "Saldo 7 Tage", cls(sumRange(7))),
+      tile(S(openExp), `noch offen (${open.length} unverkauft, erwartet)`), tile(S(total), "Saldo gesamt", cls(total)));
+    renderBookChart(byDay);
+
+    // offene Verkäufe
+    const ob = $("book-open");
+    ob.innerHTML = "";
+    $("book-open-card").style.display = open.length ? "" : "none";
+    open.sort((a, b) => a.at - b.at).forEach((e) => {
+      const sp = soldPieces(e);
+      ob.append(el("div", { class: "shop-item" },
+        el("div", { class: "t" }, el("div", { style: "font-weight:700" }, `${S(restPieces(e))} × ${e.label}` + (sp ? ` (von ${S(e.pieces)})` : "")),
+          el("div", { class: "small muted" }, `gecraftet ${dayLabel(dayKey(e.at))} · Einkauf ${S(e.cost)}` +
+            (sp ? ` · schon ${S(soldAmount(e))} eingenommen` : e.expected ? ` · erwartet ${S(e.expected)}` : ""))),
+        el("button", { class: "btn primary", on: { click: () => sellEntry(e) } }, "Verkauf +")));
+    });
+
+    // Wo verkaufst du am besten? (Ø-Preis je Item und Markt aus deinen Verkäufen)
+    const perMarket = {};
+    for (const e of book) for (const sl of e.sales || []) {
+      if (!sl.loc || !sl.pieces) continue;
+      const k = e.label + "|" + sl.loc;
+      const m = (perMarket[k] = perMarket[k] || { label: e.label, loc: sl.loc, pieces: 0, amount: 0 });
+      m.pieces += sl.pieces; m.amount += sl.amount;
+    }
+    const pm = Object.values(perMarket);
+    let pmCard = $("book-markets");
+    if (!pmCard) { pmCard = el("div", { class: "card", id: "book-markets" }); $("book-days").before(pmCard); }
+    pmCard.innerHTML = "";
+    pmCard.style.display = pm.length ? "" : "none";
+    if (pm.length) {
+      pmCard.append(el("b", {}, "Deine Verkäufe je Markt"), el("div", { class: "muted small" }, "Ø netto pro Stück – so siehst du, wo du am meisten bekommst"));
+      const byItem = {};
+      pm.forEach((m) => (byItem[m.label] = byItem[m.label] || []).push(m));
+      Object.entries(byItem).forEach(([label, list]) => {
+        list.sort((a, b) => b.amount / b.pieces - a.amount / a.pieces);
+        pmCard.append(el("div", { class: "shop-item", style: "display:block" },
+          el("div", { style: "font-weight:700" }, label),
+          ...list.map((m, i) => el("div", { class: "row small", style: "justify-content:space-between" },
+            el("span", { class: i === 0 && list.length > 1 ? "pos" : "" }, `${i === 0 && list.length > 1 ? "★ " : ""}${m.loc} · ${S(m.pieces)} Stk`),
+            el("span", { class: "num" }, `Ø ${S(m.amount / m.pieces)} · ${S(m.amount)}`)))));
+      });
+    }
+
+    // Tage
+    const box = $("book-days");
+    box.innerHTML = "";
+    const keys = Object.keys(byDay).sort().reverse();
+    if (!keys.length) box.append(el("div", { class: "empty" }, "Noch keine Einträge. In der Einkaufsliste abhaken oder in einem Rechner „✔ Gecraftet – ins Buch eintragen“ tippen."));
+    for (const k of keys) {
+      const d = byDay[k], saldo = d.inc - d.exp;
+      const card = el("div", { class: "card" },
+        el("div", { class: "row", style: "justify-content:space-between" },
+          el("b", {}, dayLabel(k)),
+          el("span", { class: "num " + (saldo > 0 ? "pos" : saldo < 0 ? "neg" : "muted"), style: "font-weight:800" }, (saldo > 0 ? "+" : "") + S(saldo))),
+        el("div", { class: "small muted", style: "margin-bottom:4px" }, `Ausgaben ${S(d.exp)} · Einnahmen ${S(d.inc)}`));
+      for (const x of d.list) {
+        const e = x.e;
+        let title, sub;
+        if (x.kind === "craft") {
+          title = `⚒ ${S(e.pieces)} × ${e.label} gecraftet`;
+          const rest = restPieces(e);
+          sub = (e.where ? e.where + " · " : "") + (rest === e.pieces ? "noch nicht verkauft" : rest ? `${S(rest)} noch übrig` : `alles verkauft · Gewinn ${S(soldAmount(e) - e.cost)}`);
+        } else if (x.kind === "sale") {
+          const sl = x.sale;
+          title = `💰 ${S(sl.pieces)} × ${e.label} in ${sl.loc || "?"}`;
+          sub = `${sl.unit ? S(sl.unit) + " pro Stück · " : ""}${sl.mode === "instant" ? "Sofortverkauf" : sl.mode === "order" ? "Verkaufsauftrag" : ""}`;
+        }
+        else { title = (x.kind === "expense" ? "− " : "+ ") + (e.note || (x.kind === "expense" ? "Ausgabe" : "Einnahme")); sub = "manuell"; }
+        card.append(el("div", { class: "shop-item" },
+          el("div", { class: "t" }, el("div", { style: "font-weight:600" }, title), el("div", { class: "small muted" }, sub)),
+          el("div", { class: "num " + (x.amount >= 0 ? "pos" : "neg") }, (x.amount > 0 ? "+" : "") + S(x.amount)),
+          x.kind === "craft" && restPieces(e) > 0 ? el("button", { class: "icon-btn", title: "Verkauf eintragen", on: { click: () => sellEntry(e) } }, "💰") : null,
+          el("button", { class: "icon-btn", title: "Bearbeiten/Löschen", on: { click: () => editBookEntry(x) } }, "✎")));
+      }
+      box.append(card);
+    }
+  }
+
+  function editBookEntry(x) {
+    const e = x.e;
+    const what = x.kind === "sale" ? "Erlös" : x.kind === "craft" ? "Einkauf" : "Betrag";
+    const cur = x.kind === "sale" ? x.sale.amount : x.kind === "craft" ? e.cost : e.amount;
+    const v = window.prompt(`${e.label || e.note || ""}\n${what} ändern (Silber).\nLeer lassen und OK = ${x.kind === "sale" ? "Verkauf zurücknehmen" : "Eintrag löschen"}`, String(cur));
+    if (v === null) return;
+    if (v.trim() === "") {
+      if (x.kind === "sale") e.sales.splice(x.idx, 1);
+      else if (confirm("Eintrag wirklich löschen?")) book = book.filter((b) => b !== e);
+    } else {
+      const n = Math.max(0, Math.round(Number(v.replace(/[.\s]/g, "").replace(",", ".")) || 0));
+      if (x.kind === "sale") x.sale.amount = n; else if (x.kind === "craft") e.cost = n; else e.amount = n;
+    }
+    saveBook(); renderBook();
+  }
+
+  function addManual(type) {
+    const note = window.prompt(type === "expense" ? "Wofür? (z. B. Transport, Stationsgebühr)" : "Wofür? (z. B. Journale verkauft)", "");
+    if (note === null) return;
+    const amount = askSilver("Betrag in Silber", "");
+    if (amount === null) return;
+    book.push({ uid: uid(), type, note: note.trim(), amount, at: Date.now() });
+    saveBook(); renderBook();
+  }
+
+  async function exportBook() {
+    const rows = [["Datum", "Art", "Item", "Stück", "Einkauf", "Erlös", "Notiz"]];
+    for (const e of book.slice().sort((a, b) => a.at - b.at)) {
+      const d = new Date(e.at).toLocaleString("de-DE");
+      if (e.type === "craft") {
+        rows.push([d, "gecraftet", e.label, e.pieces, e.cost, "", e.where || ""]);
+        (e.sales || []).forEach((sl) => rows.push([new Date(sl.at).toLocaleString("de-DE"), "verkauft", e.label, sl.pieces, "", sl.amount,
+          `${sl.loc || ""}${sl.unit ? " à " + sl.unit : ""}`]));
+      }
+      else rows.push([d, e.type === "expense" ? "Ausgabe" : "Einnahme", "", "", e.type === "expense" ? e.amount : "", e.type === "income" ? e.amount : "", e.note || ""]);
+    }
+    const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(";")).join("\n");
+    try {
+      const file = new File(["﻿" + csv], "albion-buch.csv", { type: "text/csv" });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: "Albion Buch" }); return; }
+    } catch (e) { /* weiter mit Download */ }
+    const a = el("a", { href: URL.createObjectURL(new Blob(["﻿" + csv], { type: "text/csv" })), download: "albion-buch.csv" });
+    document.body.append(a); a.click(); a.remove();
+  }
+
+  function showListPane(p) {
+    ui.listPane = p; saveUi();
+    [...$("list-tabs").children].forEach((b) => b.classList.toggle("on", b.dataset.p === p));
+    $("shop-pane").style.display = p === "shop" ? "" : "none";
+    $("book-pane").style.display = p === "book" ? "" : "none";
+    if (p === "book") renderBook(); else renderShop();
   }
 
   // ------------------------------------------------------------ Einstellungen
@@ -1227,7 +1494,7 @@
     ui.view = view; saveUi();
     document.querySelectorAll(".view").forEach((v) => v.classList.toggle("active", v.id === "view-" + view));
     document.querySelectorAll("nav.tabs button").forEach((b) => b.classList.toggle("on", b.dataset.view === view));
-    if (view === "shop") renderShop();
+    if (view === "shop") showListPane(ui.listPane || "shop");
     if (view === "craft") { renderCraftSearch(); renderCraft(); }
     if (view === "silver") renderSilver();
     if (view === "alch") { renderAlchSearch(); renderAlch(); }
@@ -1266,6 +1533,44 @@
       const r = calcRow(); if (!r) return;
       const n = calcAmount(r, ui.focus);
       if (n > 0) { addToShop([shopEntry(r, n)]); $("calc-shop").textContent = "✔ Zur Einkaufsliste hinzugefügt"; setTimeout(() => { $("calc-shop").textContent = "🛒 Diese Menge zur Einkaufsliste"; }, 1800); }
+    });
+
+    // Liste / Buch
+    [...$("list-tabs").children].forEach((b) => b.addEventListener("click", () => showListPane(b.dataset.p)));
+    $("book-expense").addEventListener("click", () => addManual("expense"));
+    $("book-income").addEventListener("click", () => addManual("income"));
+    $("book-export").addEventListener("click", exportBook);
+    $("sale-close").addEventListener("click", closeSale);
+    $("sale-save").addEventListener("click", saveSale);
+    ["sale-pieces", "sale-price"].forEach((id) => $(id).addEventListener("input", saleCalc));
+    $("sale-mode").addEventListener("change", saleCalc);
+    $("sale-loc").addEventListener("change", () => {
+      if (!saleEntry) return;
+      const [lp] = store.get(saleEntry.id, $("sale-loc").value, $("sale-mode").value === "instant" ? "buy" : "sell");
+      if (lp) $("sale-price").value = Math.round(lp);
+      saleCalc();
+    });
+    $("sale-total").addEventListener("input", () => { saleTotalTouched = true; });
+    $("a-done").addEventListener("click", () => {
+      const id = aId(); if (!id) return;
+      const o = aOpts(id);
+      const pc = aPieces(id, o);
+      const plan = C.cheapPlan(gd, store, settings, id, Math.max(pc.pieces, gd.recipes[id].amount), o);
+      logCraft({ id, pieces: plan.pieces, cost: plan.buyCost, expected: plan.complete ? plan.res.revenue : null,
+        where: `${o.city} → ${plan.best ? plan.best.loc : o.sellLocs[0]}`,
+        price: plan.best ? plan.best.price : null, loc: plan.best ? plan.best.loc : o.sellLocs[0], mode: plan.best ? plan.best.mode : o.sellMode });
+    });
+    $("c-done").addEventListener("click", () => {
+      const k = craftCalc(); if (!k) return;
+      logCraft({ id: ui.cItem, pieces: k.crafts * k.rec.amount, cost: k.buyCost, expected: k.res.complete ? k.res.revenue : null,
+        where: `${k.city} → ${k.sellLoc}`, price: k.best ? k.best.price : null, loc: k.sellLoc, mode: k.mode });
+    });
+    $("calc-done").addEventListener("click", () => {
+      const r = calcRow(); if (!r) return;
+      const n = calcAmount(r, ui.focus);
+      const d = C.refineDetail(gd, settings, r, n, ui.focus);
+      logCraft({ id: r.id, pieces: n, cost: d.cost_buy, expected: d.revenue_gross !== null ? d.revenue_gross - d.fee : null,
+        where: `${r.city} → ${r.sell_loc || r.city}`, price: r.sell_price, loc: r.sell_loc || r.city, mode: r.sell_mode || ui.sellMode });
     });
 
     // Tränke & Essen

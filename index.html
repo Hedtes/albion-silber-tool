@@ -185,6 +185,7 @@
         <div class="muted small" id="a-buy-info" style="margin-top:4px"></div>
         <div id="a-buylist"></div>
       </div>
+      <button class="btn primary block" id="a-done">✔ Gecraftet – ins Buch eintragen</button>
     </div>
   </section>
 
@@ -240,11 +241,34 @@
 
       <div class="card"><table class="res num" id="c-table"></table></div>
       <button class="btn primary block" id="c-shop">🛒 Zur Einkaufsliste</button>
+      <button class="btn block" id="c-done" style="margin-top:8px">✔ Gecraftet – ins Buch eintragen</button>
     </div>
   </section>
 
   <!-- ===================================================== Einkaufsliste -->
   <section class="view" id="view-shop">
+    <div class="seg" id="list-tabs" style="margin-bottom:12px">
+      <button data-p="shop">🛒 Einkaufsliste</button>
+      <button data-p="book">📒 Buch</button>
+    </div>
+    <div id="book-pane" style="display:none">
+      <div class="tiles" id="book-tiles"></div>
+      <div class="card" id="book-chart-card">
+        <div class="row" style="justify-content:space-between"><b>Gewinn pro Tag</b><span class="muted small">letzte 14 Tage</span></div>
+        <div id="book-chart" style="margin-top:8px"></div>
+      </div>
+      <div class="row" style="margin-bottom:12px">
+        <button class="btn" id="book-expense">− Ausgabe</button>
+        <button class="btn" id="book-income">+ Einnahme</button>
+        <button class="btn" id="book-export" style="margin-left:auto">Export</button>
+      </div>
+      <div class="card" id="book-open-card" style="display:none">
+        <b>Noch nicht verkauft</b>
+        <div id="book-open"></div>
+      </div>
+      <div id="book-days"></div>
+    </div>
+    <div id="shop-pane">
     <div class="tiles" id="shop-tiles"></div>
     <div class="card">
       <div class="row" style="justify-content:space-between">
@@ -262,6 +286,7 @@
       <div id="shop-mats"></div>
     </div>
     <button class="btn block" id="shop-clear">Liste leeren</button>
+    </div>
   </section>
 
   <!-- ===================================================== Einstellungen -->
@@ -293,7 +318,7 @@
   <button data-view="refine" class="on"><span class="ic">⛏</span>Refining</button>
   <button data-view="alch"><span class="ic">🧪</span>Tränke</button>
   <button data-view="craft"><span class="ic">⚒</span>Crafting</button>
-  <button data-view="shop"><span class="ic">🛒</span>Einkauf</button>
+  <button data-view="shop"><span class="ic">📋</span>Liste</button>
   <button data-view="settings"><span class="ic">⚙</span>Optionen</button>
 </nav>
 
@@ -325,6 +350,28 @@
       <table class="res num" id="calc-table"></table>
     </div>
     <button class="btn primary block" id="calc-shop">🛒 Diese Menge zur Einkaufsliste</button>
+    <button class="btn block" id="calc-done" style="margin-top:8px">✔ Gecraftet – ins Buch eintragen</button>
+  </div>
+</div>
+
+<!-- ===================================================== Verkauf eintragen -->
+<div class="sheet" id="sale-sheet">
+  <div class="bar">
+    <button class="icon-btn" id="sale-close" aria-label="Zurück">←</button>
+    <h2 id="sale-title">Verkauf eintragen</h2>
+  </div>
+  <div class="body">
+    <div class="muted small" id="sale-info" style="margin-bottom:12px"></div>
+    <div class="grid">
+      <div class="field"><label>Stück verkauft</label><input id="sale-pieces" type="number" inputmode="numeric" min="1"></div>
+      <div class="field"><label>Markt</label><select id="sale-loc"></select></div>
+      <div class="field"><label>Verkaufsart</label><select id="sale-mode">
+        <option value="order">Verkaufsauftrag (Steuer + Gebühr)</option><option value="instant">Sofortverkauf (nur Steuer)</option></select></div>
+      <div class="field"><label>Preis pro Stück</label><input id="sale-price" type="number" inputmode="numeric" min="0"></div>
+      <div class="field full"><label>Erlös erhalten (nach Steuer) – selbst änderbar</label><input id="sale-total" type="number" inputmode="numeric" min="0"></div>
+    </div>
+    <div class="small muted" id="sale-calc" style="margin:8px 2px 14px"></div>
+    <button class="btn primary block" id="sale-save">✔ Verkauf speichern</button>
   </div>
 </div>
 

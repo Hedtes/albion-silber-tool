@@ -240,6 +240,7 @@
       </div>
 
       <div class="card"><table class="res num" id="c-table"></table></div>
+      <div class="card" id="c-journal" style="display:none"></div>
       <button class="btn primary block" id="c-shop">🛒 Zur Einkaufsliste</button>
       <button class="btn block" id="c-done" style="margin-top:8px">✔ Gecraftet – ins Buch eintragen</button>
     </div>
@@ -248,11 +249,37 @@
   <!-- ===================================================== Einkaufsliste -->
   <section class="view" id="view-shop">
     <div class="seg" id="list-tabs" style="margin-bottom:12px">
-      <button data-p="shop">🛒 Einkaufsliste</button>
+      <button data-p="shop">🛒 Einkauf</button>
       <button data-p="book">📒 Buch</button>
+      <button data-p="stock">📦 Lager</button>
+      <button data-p="orders">📑 Aufträge</button>
     </div>
+    <div id="stock-pane" style="display:none">
+      <div class="card">
+        <b>Dein Lager</b>
+        <div class="muted small" style="margin:2px 0 8px">Was du schon hast, wird in den Rechnern zuerst verbraucht und von der Einkaufsliste abgezogen. „Wert pro Stück“: 0 = selbst gesammelt/gratis, sonst z. B. dein Einkaufspreis.</div>
+        <input id="stock-search" type="search" list="items-dl" placeholder="Item hinzufügen, z. B. „Zinnenklette“" style="width:100%;padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--panel2);font-size:16px">
+        <div id="stock-list" style="margin-top:8px"></div>
+      </div>
+    </div>
+    <div id="orders-pane" style="display:none">
+      <div class="tiles" id="orders-tiles"></div>
+      <div class="row" style="margin-bottom:12px">
+        <button class="btn primary" id="order-add">+ Auftrag</button>
+        <button class="btn" id="orders-check" style="margin-left:auto">⟳ Preise prüfen</button>
+      </div>
+      <div class="card"><div id="orders-list"></div></div>
+    </div>
+    <datalist id="items-dl"></datalist>
     <div id="book-pane" style="display:none">
       <div class="tiles" id="book-tiles"></div>
+      <div class="card" id="book-eval">
+        <div class="row" style="justify-content:space-between"><b>📊 Auswertung</b>
+          <div class="mini-chips" id="eval-range"></div></div>
+        <div class="muted small" style="margin:2px 0 6px">Echter Gewinn aus deinen Verkäufen (Einkauf anteilig zur verkauften Menge)</div>
+        <div class="tiles" id="eval-tiles" style="margin-bottom:6px"></div>
+        <div id="eval-list"></div>
+      </div>
       <div class="card" id="book-chart-card">
         <div class="row" style="justify-content:space-between"><b>Gewinn pro Tag</b><span class="muted small">letzte 14 Tage</span></div>
         <div id="book-chart" style="margin-top:8px"></div>
@@ -372,6 +399,27 @@
     </div>
     <div class="small muted" id="sale-calc" style="margin:8px 2px 14px"></div>
     <button class="btn primary block" id="sale-save">✔ Verkauf speichern</button>
+  </div>
+</div>
+
+<div class="sheet" id="order-sheet">
+  <div class="bar">
+    <button class="icon-btn" id="order-close" aria-label="Zurück">←</button>
+    <h2>Auftrag eintragen</h2>
+  </div>
+  <div class="body">
+    <div class="seg" id="order-side" style="margin-bottom:12px">
+      <button data-s="buy">Kaufauftrag</button>
+      <button data-s="sell">Verkaufsauftrag</button>
+    </div>
+    <div class="grid">
+      <div class="field full"><label>Item</label><input id="order-item" list="items-dl" placeholder="Name eintippen und auswählen"></div>
+      <div class="field"><label>Stück</label><input id="order-qty" type="number" inputmode="numeric" min="1"></div>
+      <div class="field"><label>Preis pro Stück</label><input id="order-price" type="number" inputmode="numeric" min="0"></div>
+      <div class="field full"><label>Markt</label><select id="order-loc"></select></div>
+    </div>
+    <div class="small muted" id="order-info" style="margin:10px 2px 14px"></div>
+    <button class="btn primary block" id="order-save">✔ Auftrag speichern</button>
   </div>
 </div>
 

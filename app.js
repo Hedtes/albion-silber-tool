@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const C = window.Core;
-  const VERSION = "1.4.0";
+  const VERSION = "1.5.0";
   const $ = (id) => document.getElementById(id);
   const S = C.fmtSilver;
   const SLOW_DAYS = 7;
@@ -285,7 +285,10 @@
     if ($("calc").classList.contains("on")) renderCalc();
     if (ui.view === "craft") renderCraft();
     if (ui.view === "alch") renderAlch();
-    if (ui.view === "shop") { if ((ui.listPane || "shop") === "book") renderBook(); else renderShop(); }
+    if (ui.view === "shop") {
+      const lp = ui.listPane || "shop";
+      if (lp === "book") renderBook(); else if (lp === "stock") renderStock(); else if (lp === "orders") renderOrders(); else renderShop();
+    }
     $("premium-badge").textContent = settings.premium ? "★ Premium · 4 %" : "ohne Premium · 8 %";
   }
 
@@ -637,7 +640,7 @@
     const buyCity = ui.aBuy === C.SAME_CITY ? city : ui.aBuy;
     const sellLocs = ui.aSell === C.AUTO_MARKET ? C.MARKETS : [ui.aSell === C.SAME_CITY ? city : ui.aSell];
     return { city, buyCity, buyMode: ui.aBuyMode, maxAge: settings.max_age_hours, alts: alchData.alts,
-      focus: ui.aFocus, daily: Number(ui.aDaily) || 0, sellLocs, sellMode: ui.aSellMode };
+      focus: ui.aFocus, daily: Number(ui.aDaily) || 0, sellLocs, sellMode: ui.aSellMode, stock };
   }
   const aQty = () => Math.max(1, Math.floor(Number(ui.aQty) || 1));
   const aBudget = () => Math.max(0, Math.floor(Number(ui.aBudget) || 0));
@@ -696,7 +699,8 @@
     const id = aId(); if (!id) return;
     const variants = aVariants(ui.aBase);
     const o = aOpts(id);
-    runJobs([[alchItemsToLoad(variants), [o.buyCity]], [variants, o.sellLocs], [variants, o.sellLocs, "history"]], () => render());
+    const items = alchItemsToLoad(variants);
+    runJobs([[items, [o.buyCity]], [variants, o.sellLocs], [variants, o.sellLocs, "history"], [items, [o.buyCity], "history"]], () => render());
   }
 
   function aEditPrice(item, loc, kind, current) {
@@ -751,7 +755,8 @@
         el("div", { class: "n" }, "Verkaufspreis " + gd.label(id)),
         el("div", { class: "small muted" }, `${loc} · ${mode === "instant" ? "Sofortverkauf an Kaufgebot" : "Verkaufsauftrag"}` +
           ` · Verkäufe/Tag ${vol === null || vol === undefined ? "?" : C.fmtNum(vol, vol < 10 ? 1 : 0)}`),
-        el("div", { class: "small" }, el("span", { class: "src " + (src || "fehlt") }, `${src || "fehlt"}${ts ? " · " + C.fmtAge(ts) : ""}`))),
+        el("div", { class: "small" }, el("span", { class: "src " + (src || "fehlt") }, `${src || "fehlt"}${ts ? " · " + C.fmtAge(ts) : ""}`)),
+        trend(id, loc, p, "sell")),
       el("div", { class: "v num", style: "font-size:22px" }, S(p)),
       el("button", { class: "icon-btn", title: "Preis ändern", on: { click: () => {
         // bei „bester Markt“ den Markt festhalten, damit der eigene Preis auch dort gilt
@@ -893,17 +898,25 @@
     const bkind = o.buyMode === "instant" ? "sell" : "buy";
     plan.buyList.forEach((it) => {
       const man = store.isManual(it.item, o.buyCity, bkind);
-      bl.append(el("div", { class: "shop-item" },
-        el("div", { class: "t" }, el("div", { style: "font-weight:700" }, `${S(it.qty)} × ${gd.label(it.item)}`),
+      const [bp] = store.get(it.item, o.buyCity, "buy");
+      bl.append(el("div", { class: "shop-item", style: "flex-wrap:wrap" },
+        el("div", { class: "t" }, el("div", { style: "font-weight:700" }, it.buy > 0 ? `${S(it.buy)} × ${gd.label(it.item)}` : `✔ ${gd.label(it.item)} – nichts kaufen`),
+          it.fromStock ? el("div", { class: "small gold" }, `📦 ${S(it.fromStock)} aus dem Lager · gesamt ${S(it.qty)}`) : null,
           el("div", { class: "small " + (man ? "" : "muted"), style: man ? "color:var(--manual)" : "" },
-            `${o.buyCity} · ${it.price === null ? "Preis fehlt" : S(it.price) + " pro Stück"}${man ? " · eigener Preis" : ""}`)),
-        el("div", { class: "num" }, S(it.cost)),
-        el("button", { class: "icon-btn", on: { click: () => aEditPrice(it.item, o.buyCity, bkind) } }, "✎"),
-        el("button", { class: "icon-btn", on: { click: () => aResetPrice(it.item, o.buyCity, bkind) } }, "↺")));
+            `${o.buyCity} · ${it.price === null ? "Preis fehlt" : S(it.price) + " pro Stück"}${man ? " · eigener Preis" : ""}`),
+          trend(it.item, o.buyCity, it.price, "buy")),
+        el("div", { class: "num", style: "font-weight:700" }, S(it.cost)),
+        el("div", { class: "row", style: "gap:6px;flex-wrap:nowrap;width:100%;justify-content:flex-end" },
+          el("button", { class: "icon-btn", title: "Preis", on: { click: () => aEditPrice(it.item, o.buyCity, bkind) } }, "✎"),
+          el("button", { class: "icon-btn", title: "Live-Preis", on: { click: () => aResetPrice(it.item, o.buyCity, bkind) } }, "↺"),
+          el("button", { class: "icon-btn", title: "Lager", on: { click: () => editStock(it.item) } }, "📦"),
+          it.buy > 0 ? el("button", { class: "icon-btn", title: "Als Kaufauftrag", on: { click: () => openOrder({ side: "buy", id: it.item, qty: it.buy, price: bp ? bp + 1 : it.price, loc: o.buyCity }) } }, "📑") : null)));
     });
     const sp = plan.directCost !== null && plan.buyCost !== null ? plan.directCost - plan.buyCost : null;
     $("a-buy-info").innerHTML = plan.buyCost === null ? "Noch nicht alle Preise vorhanden." :
-      `Einkauf gesamt <b>${S(plan.buyCost)}</b> Silber` + (sp > 0 ? ` · <span class="pos">${S(sp)} günstiger</span> als alle Zutaten direkt zu kaufen (${S(plan.directCost)})` : "");
+      `Einkauf gesamt <b>${S(plan.buyCost)}</b> Silber` + (plan.stockValue ? ` · aus dem Lager: Wert ${S(plan.stockValue)}` : "") +
+      (sp > 0 ? ` · <span class="pos">${S(sp)} günstiger</span> als alle Zutaten direkt zu kaufen (${S(plan.directCost)})` : "") +
+      `<br>📦 = ins Lager · 📑 = als Kaufauftrag merken`;
     renderAlch.text = `Einkauf für ${S(plan.pieces)} × ${gd.label(id)} (${o.buyCity})\n\n` +
       plan.buyList.map((it) => `${S(it.qty)} × ${gd.label(it.item)}${it.cost !== null ? " – " + S(it.cost) : ""}`).join("\n") +
       (plan.steps.length ? "\n\nSchritte:\n" + plan.steps.slice().reverse().map((s) => `${S(s.out)} × ${gd.label(s.item)}`).join("\n") : "") +
@@ -939,8 +952,13 @@
       const [p, src, ts] = store.get(pl.id, buy, kind);
       pl.price = p !== null && src !== "alt" || src === "manuell" ? C.buyUnitCost(settings, p, ui.cBuyMode) : null;
       pl.src = src; pl.ts = ts; pl.raw = p;
-      prices[pl.id] = pl.price;
-      pl.cost = pl.price !== null ? pl.buy * pl.price : null;
+      const st = stock[pl.id];
+      pl.fromStock = st && st.qty > 0 ? Math.min(pl.buy, st.qty) : 0;
+      pl.buyNet = pl.buy - pl.fromStock;
+      // Preis für den Gewinn: Lager mit seinem Wert, Rest zum Marktpreis
+      prices[pl.id] = pl.buyNet > 0 ? (pl.price === null ? null : (pl.fromStock * (st ? st.value : 0) + pl.buyNet * pl.price) / pl.buy)
+        : (st ? st.value : pl.price);
+      pl.cost = pl.buyNet > 0 ? (pl.price !== null ? pl.buyNet * pl.price : null) : 0;
       if (pl.cost === null) buyOk = false; else buyCost += pl.cost;
     }
     const best = C.bestSale(store, settings, ui.cItem, sellLocs, ui.cSellMode);
@@ -981,7 +999,11 @@
 
   function loadCraft() {
     const k = craftCalc(); if (!k) return;
-    runJobs([[k.rec.res.map((x) => x[0]), [k.buy]], [[ui.cItem], k.sellLocs], [[ui.cItem], k.sellLocs, "history"]], () => render());
+    const mats = k.rec.res.map((x) => x[0]);
+    const jobs = [[mats, [k.buy]], [[ui.cItem], k.sellLocs], [[ui.cItem], k.sellLocs, "history"], [mats, [k.buy], "history"]];
+    const jf = journalFor(ui.cItem);
+    if (jf) jobs.push([[jf[0] + "_FULL", jf[0] + "_EMPTY"], [k.city]]);
+    runJobs(jobs, () => render());
   }
 
   function cPriceKey(which, k) {
@@ -1050,12 +1072,16 @@
         el("div", { class: "t" },
           el("div", { class: "n" }, gd.label(pl.id)),
           el("div", { class: "small muted" }, `${pl.cnt} pro Craft · ohne Rückgabe ${S(pl.full)} · ${rest}`),
+          pl.fromStock ? el("div", { class: "small gold" }, `📦 ${S(pl.fromStock)} aus dem Lager`) : null,
           el("div", { class: "small" }, `Stückpreis ${S(pl.price)} `, el("span", { class: "src " + (pl.src || "fehlt") },
-            `${pl.src || "fehlt"}${pl.ts ? " · " + C.fmtAge(pl.ts) : ""}`), `  ·  Einkauf ${S(pl.cost)}`)),
+            `${pl.src || "fehlt"}${pl.ts ? " · " + C.fmtAge(pl.ts) : ""}`), `  ·  Einkauf ${S(pl.cost)}`),
+          trend(pl.id, k.buy, pl.price, "buy")),
         el("div", { style: "text-align:right" }, el("div", { class: "small muted" }, "KAUFEN"),
-          el("div", { class: "v num", style: "font-size:20px;color:var(--gold-lt)" }, S(pl.buy))),
-        el("button", { class: "icon-btn", on: { click: () => editCraftPrice(pl.id) } }, "✎"),
-        el("button", { class: "icon-btn", on: { click: () => resetCraftPrices([pl.id]) } }, "↺"),
+          el("div", { class: "v num", style: "font-size:20px;color:var(--gold-lt)" }, S(pl.buyNet))),
+        el("div", { style: "display:flex;flex-direction:column;gap:6px" },
+          el("button", { class: "icon-btn", on: { click: () => editCraftPrice(pl.id) } }, "✎"),
+          el("button", { class: "icon-btn", on: { click: () => resetCraftPrices([pl.id]) } }, "↺"),
+          el("button", { class: "icon-btn", on: { click: () => editStock(pl.id) } }, "📦")),
       ));
     }
     // Produkt
@@ -1066,15 +1092,18 @@
       el("div", { class: "t" },
         el("div", { class: "n" }, "➜ Verkauf: " + gd.label(ui.cItem)),
         el("div", { class: "small muted" }, `${k.sellLoc}${k.mode === "instant" ? " · Sofortverkauf" : ""} · Verkäufe/Tag ${vol === null ? "?" : C.fmtNum(vol, vol < 10 ? 1 : 0)}`),
-        el("div", { class: "small" }, el("span", { class: "src " + (psrc || "fehlt") }, `${psrc || "fehlt"}${pts ? " · " + C.fmtAge(pts) : ""}`))),
+        el("div", { class: "small" }, el("span", { class: "src " + (psrc || "fehlt") }, `${psrc || "fehlt"}${pts ? " · " + C.fmtAge(pts) : ""}`)),
+        trend(ui.cItem, k.sellLoc, pp, "sell")),
       el("div", { style: "text-align:right" }, el("div", { class: "small muted" }, "Stückpreis"),
         el("div", { class: "v num", style: "font-size:20px" }, S(pp))),
       el("button", { class: "icon-btn", on: { click: () => editCraftPrice("prod") } }, "✎"),
       el("button", { class: "icon-btn", on: { click: () => resetCraftPrices(["prod"]) } }, "↺"),
     ));
 
-    // Ergebnis
+    // Ergebnis (+ Journale, wenn eingeschaltet)
     const r = k.res, ok = r.complete;
+    const jc = journalCalc(k);
+    const jx = ui.cJournal && jc && jc.extra ? jc.extra : 0;
     const rowsT = [
       ["Herstellen", `${S(k.crafts * rec.amount)} Stück (${S(k.crafts)} Crafts)`, true],
       ["Einkauf (Silber)", S(k.buyCost), true, "gold"],
@@ -1088,18 +1117,21 @@
       ["Gewinn pro Stück", ok ? S(r.profit_each) : "–", false, ok ? (r.profit > 0 ? "pos" : "neg") : ""],
       ["Marge", ok ? C.fmtNum(r.margin) + " %" : "–", false, ok ? (r.profit > 0 ? "pos" : "neg") : ""],
       ["Fokus nötig", ui.cFocus ? S(r.focus) : "–"],
-      ["Silber pro Fokus", ui.cFocus && ok && r.focus ? C.fmtNum(r.profit / r.focus) : "–"],
+      ["Silber pro Fokus", ui.cFocus && ok && r.focus ? C.fmtNum((r.profit + jx) / r.focus) : "–"],
     ];
+    if (jx) rowsT.splice(9, 0, ["+ Journale", S(jx), false, jx > 0 ? "pos" : "neg"], ["= Gewinn inkl. Journale", ok ? S(r.profit + jx) : "–", true, ok ? (r.profit + jx > 0 ? "pos" : "neg") : ""]);
     const tbl = $("c-table");
     tbl.innerHTML = "";
     rowsT.forEach(([l, v, key, cls]) => tbl.append(el("tr", { class: key ? "key" : "" }, el("td", {}, l), el("td", { class: cls || "" }, v))));
     const b = $("c-banner");
     if (!ok) { b.className = "banner"; b.textContent = "Preise fehlen – „Live-Preise laden“ oder mit ✎ eintragen"; }
     else {
-      b.className = "banner " + marginTag(r.margin, r.profit);
-      b.innerHTML = `<span class="big num">${r.profit > 0 ? "▲" : "▼"} ${S(r.profit)} Silber</span>` +
-        `${S(k.crafts * rec.amount)} × ${gd.name(ui.cItem)} · Marge ${C.fmtNum(r.margin)} % · Einkauf ${S(k.buyCost)}`;
+      const tot = r.profit + jx, mg = r.cost ? tot / r.cost * 100 : 0;
+      b.className = "banner " + marginTag(mg, tot);
+      b.innerHTML = `<span class="big num">${tot > 0 ? "▲" : "▼"} ${S(tot)} Silber</span>` +
+        `${S(k.crafts * rec.amount)} × ${gd.name(ui.cItem)} · Marge ${C.fmtNum(mg)} % · Einkauf ${S(k.buyCost)}` + (jx ? ` · inkl. ${S(jx)} Journale` : "");
     }
+    renderJournal(k);
   }
 
   // ------------------------------------------------------------ Einkaufsliste
@@ -1327,6 +1359,7 @@
     t.append(tile(S(td), "Saldo heute", cls(td)), tile(S(sumRange(7)), "Saldo 7 Tage", cls(sumRange(7))),
       tile(S(openExp), `noch offen (${open.length} unverkauft, erwartet)`), tile(S(total), "Saldo gesamt", cls(total)));
     renderBookChart(byDay);
+    renderEval();
 
     // offene Verkäufe
     const ob = $("book-open");
@@ -1338,7 +1371,10 @@
         el("div", { class: "t" }, el("div", { style: "font-weight:700" }, `${S(restPieces(e))} × ${e.label}` + (sp ? ` (von ${S(e.pieces)})` : "")),
           el("div", { class: "small muted" }, `gecraftet ${dayLabel(dayKey(e.at))} · Einkauf ${S(e.cost)}` +
             (sp ? ` · schon ${S(soldAmount(e))} eingenommen` : e.expected ? ` · erwartet ${S(e.expected)}` : ""))),
-        el("button", { class: "btn primary", on: { click: () => sellEntry(e) } }, "Verkauf +")));
+        el("div", { style: "display:flex;flex-direction:column;gap:6px" },
+          el("button", { class: "btn primary", on: { click: () => sellEntry(e) } }, "Verkauf +"),
+          el("button", { class: "btn", style: "min-height:34px;padding:5px 10px;font-size:13px", on: { click: () =>
+            openOrder({ side: "sell", id: e.id, qty: restPieces(e), price: e.price, loc: e.loc || C.CITIES[0], bookUid: e.uid }) } }, "📑 als Auftrag"))));
     });
 
     // Wo verkaufst du am besten? (Ø-Preis je Item und Markt aus deinen Verkäufen)
@@ -1451,9 +1487,280 @@
   function showListPane(p) {
     ui.listPane = p; saveUi();
     [...$("list-tabs").children].forEach((b) => b.classList.toggle("on", b.dataset.p === p));
-    $("shop-pane").style.display = p === "shop" ? "" : "none";
-    $("book-pane").style.display = p === "book" ? "" : "none";
-    if (p === "book") renderBook(); else renderShop();
+    for (const k of ["shop", "book", "stock", "orders"]) $(k + "-pane").style.display = p === k ? "" : "none";
+    if (p === "book") renderBook();
+    else if (p === "stock") { fillItemList(); renderStock(); }
+    else if (p === "orders") { fillItemList(); renderOrders(); }
+    else renderShop();
+  }
+
+  // ------------------------------------------------------------ Lager
+  let stock = storage.get("stock", {});   // item -> {qty, value}
+  const saveStock = () => storage.set("stock", stock);
+  function editStock(item) {
+    const cur = stock[item] || { qty: 0, value: 0 };
+    const q = window.prompt(`📦 ${gd.label(item)}\nWie viele hast du im Lager? (0 = entfernen)`, String(cur.qty || ""));
+    if (q === null) return;
+    const qty = Math.max(0, Math.floor(Number(q.replace(/[.\s]/g, "")) || 0));
+    if (!qty) { delete stock[item]; saveStock(); refreshAll(); return; }
+    const v = window.prompt(`Wert pro Stück für die Rechnung\n0 = selbst gesammelt/gratis, sonst z. B. dein Einkaufspreis`, String(cur.value || 0));
+    if (v === null) return;
+    stock[item] = { qty, value: Math.max(0, Number(v.replace(/[.\s]/g, "").replace(",", ".")) || 0) };
+    saveStock(); refreshAll();
+  }
+  /** Lager nach dem Craften abziehen. used: {item: qty} */
+  function consumeStock(used) {
+    const list = Object.entries(used).filter(([, q]) => q > 0);
+    if (!list.length) return;
+    if (!confirm("Verbrauchtes Material vom Lager abziehen?\n\n" + list.map(([i, q]) => `${S(q)} × ${gd.label(i)}`).join("\n"))) return;
+    for (const [i, q] of list) {
+      if (!stock[i]) continue;
+      stock[i].qty -= q;
+      if (stock[i].qty <= 0) delete stock[i];
+    }
+    saveStock();
+  }
+  function renderStock() {
+    const box = $("stock-list");
+    box.innerHTML = "";
+    const items = Object.entries(stock).sort((a, b) => gd.label(a[0]).localeCompare(gd.label(b[0]), "de"));
+    if (!items.length) box.append(el("div", { class: "empty" }, "Noch leer. Oben ein Item suchen oder in den Rechnern 📦 tippen."));
+    let total = 0;
+    for (const [item, st] of items) {
+      total += st.qty * st.value;
+      box.append(el("div", { class: "shop-item" },
+        el("div", { class: "t" }, el("div", { style: "font-weight:700" }, `${S(st.qty)} × ${gd.label(item)}`),
+          el("div", { class: "small muted" }, st.value ? `Wert ${S(st.value)} pro Stück · ${S(st.qty * st.value)}` : "selbst gesammelt · Wert 0")),
+        el("button", { class: "icon-btn", on: { click: () => editStock(item) } }, "✎"),
+        el("button", { class: "icon-btn", on: { click: () => { if (confirm(`${gd.label(item)} aus dem Lager entfernen?`)) { delete stock[item]; saveStock(); renderStock(); } } } }, "✕")));
+    }
+    if (items.length) box.append(el("div", { class: "small muted", style: "margin-top:8px" }, `${items.length} Items · Lagerwert ${S(total)} Silber`));
+  }
+  let itemIndex = null;
+  function fillItemList() {
+    if (itemIndex) return;
+    itemIndex = {};
+    const ids = new Set(Object.keys(gd.names));
+    Object.keys(gd.recipes).forEach((i) => ids.add(i));
+    const dl = $("items-dl");
+    const frag = document.createDocumentFragment();
+    for (const id of ids) {
+      const l = gd.label(id);
+      if (itemIndex[l]) continue;
+      itemIndex[l] = id;
+      frag.append(el("option", { value: l }));
+    }
+    dl.append(frag);
+  }
+  const idFromLabel = (txt) => (itemIndex && itemIndex[txt.trim()]) || null;
+
+  // ------------------------------------------------------------ Preisverlauf
+  /** Mini-Kurve (Ø-Preis pro Tag) + Vergleich aktuell vs. Durchschnitt. */
+  function trend(item, loc, current, side) {
+    const h = store.history[item + "|" + loc];
+    if (!h || !h.data || h.data.length < 2) return null;
+    const vals = h.data.map((d) => d[2]);
+    const sold = h.data.reduce((a, d) => a + d[1], 0);
+    const avg = h.data.reduce((a, d) => a + d[1] * d[2], 0) / Math.max(1, sold);
+    const min = Math.min(...vals), max = Math.max(...vals), W = 74, H = 22;
+    const pts = vals.map((v, i) => `${(i / (vals.length - 1)) * W},${H - 2 - ((v - min) / Math.max(1, max - min)) * (H - 4)}`).join(" ");
+    const pct = current ? (current - avg) / avg * 100 : null;
+    let hint = "", cls = "muted";
+    if (pct !== null) {
+      if (side === "buy") { if (pct <= -10) { hint = `günstig · ${C.fmtNum(-pct, 0)} % unter Ø`; cls = "pos"; } else if (pct >= 10) { hint = `teuer · ${C.fmtNum(pct, 0)} % über Ø`; cls = "neg"; } else hint = "normaler Preis"; }
+      else { if (pct >= 10) { hint = `gut verkaufen · ${C.fmtNum(pct, 0)} % über Ø`; cls = "pos"; } else if (pct <= -10) { hint = `unter Ø (${C.fmtNum(pct, 0)} %) · evtl. warten`; cls = "neg"; } else hint = "normaler Preis"; }
+    }
+    const node = el("span", { class: "small", style: "display:inline-flex;align-items:center;gap:6px;margin-top:2px" });
+    node.innerHTML = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" aria-hidden="true"><polyline points="${pts}" fill="none" stroke="var(--gold)" stroke-width="1.6"/></svg>`;
+    node.append(el("span", { class: cls }, `Ø${h.data.length} Tg ${S(avg)}${hint ? " · " + hint : ""}`));
+    return node;
+  }
+
+  // ------------------------------------------------------------ Journale (nur Ausrüstung)
+  let journals = { map: {}, names: {} };
+  let fameStore = storage.get("fame", {});   // item -> Ruhm pro Craft (aus dem Craft-Fenster)
+  const journalFor = (id) => journals.map[id.split("@")[0]] || null;
+  function journalCalc(k) {
+    const jf = journalFor(ui.cItem);
+    if (!jf) return null;
+    const [jid, maxfame] = jf;
+    const fame = Number(fameStore[ui.cItem]) || 0;
+    const full = jid + "_FULL", empty = jid + "_EMPTY";
+    let [pf, sf] = store.get(full, k.city, "buy");          // volles Journal sofort ans Kaufgebot
+    if (!pf) [pf, sf] = store.get(full, k.city, "sell");
+    const [pe, se] = store.get(empty, k.city, "sell");       // leeres Journal kaufen
+    const journalsFilled = fame > 0 ? k.crafts * fame / maxfame : 0;
+    const per = pf && pe !== null ? pf * (1 - C.sellFee(settings, "instant")) - (pe || 0) : null;
+    return { jid, full, empty, maxfame, fame, pf, sf, pe, se, journalsFilled, per, extra: per !== null ? journalsFilled * per : null };
+  }
+  function renderJournal(k) {
+    const box = $("c-journal");
+    const j = journalCalc(k);
+    if (!j) { box.style.display = "none"; return; }
+    box.style.display = "";
+    box.innerHTML = "";
+    const fameInp = el("input", { type: "number", inputMode: "numeric", value: j.fame || "", placeholder: "z. B. 1234",
+      on: { change: () => { fameStore[ui.cItem] = Number(fameInp.value) || 0; storage.set("fame", fameStore); renderCraft(); } } });
+    box.append(
+      el("div", { class: "row", style: "justify-content:space-between" }, el("b", {}, "📘 Journale"),
+        el("label", { class: "toggle", style: "padding:0" }, el("span", { class: "small" }, "in Gewinn einrechnen "),
+          el("input", { type: "checkbox", checked: !!ui.cJournal, on: { change: (e) => { ui.cJournal = e.target.checked; saveUi(); renderCraft(); } } }))),
+      el("div", { class: "small muted", style: "margin:2px 0 8px" }, `Füllt: ${gd.name(j.full).replace(" (voll)", "")} · ${S(j.maxfame)} Ruhm pro Journal`),
+      el("div", { class: "field" }, el("label", {}, "Ruhm pro Craft (steht im Spiel im Craft-Fenster)"), fameInp),
+      el("div", { class: "price" },
+        el("div", { class: "t" }, el("div", { class: "n" }, "Volles Journal verkaufen"), el("div", { class: "small muted" }, `${k.city} · ${j.sf || "fehlt"}`)),
+        el("div", { class: "v num" }, S(j.pf)),
+        el("button", { class: "icon-btn", on: { click: () => aEditPrice(j.full, k.city, "buy", j.pf) } }, "✎")),
+      el("div", { class: "price" },
+        el("div", { class: "t" }, el("div", { class: "n" }, "Leeres Journal kaufen"), el("div", { class: "small muted" }, `${k.city} · ${j.se || "fehlt"}`)),
+        el("div", { class: "v num" }, S(j.pe)),
+        el("button", { class: "icon-btn", on: { click: () => aEditPrice(j.empty, k.city, "sell", j.pe) } }, "✎")),
+      el("div", { class: "small", style: "margin-top:6px" }, !j.fame ? "Trag den Ruhm pro Craft ein, dann rechnet das Tool die Journale aus." :
+        j.per === null ? "Journal-Preise fehlen – „Live-Preise laden“." :
+        `${C.fmtNum(j.journalsFilled, 2)} Journale gefüllt × ${S(j.per)} = `,
+        j.fame && j.per !== null ? el("b", { class: j.extra >= 0 ? "pos" : "neg" }, `${j.extra >= 0 ? "+" : ""}${S(j.extra)} Silber`) : null,
+        j.fame && j.per !== null && j.per < 0 ? el("div", { class: "small neg" }, "Leere Journale sind gerade teurer, als volle bringen – lohnt sich im Moment nicht.") : null),
+    );
+  }
+
+  // ------------------------------------------------------------ Buch-Auswertung
+  function renderEval() {
+    const ranges = [[7, "7 Tage"], [30, "30 Tage"], [0, "Alles"]];
+    const rb = $("eval-range");
+    rb.innerHTML = "";
+    const cur = ui.evalRange === undefined ? 30 : ui.evalRange;
+    ranges.forEach(([d, l]) => rb.append(el("button", { class: d === cur ? "on" : "", on: { click: () => { ui.evalRange = d; saveUi(); renderEval(); } } }, l)));
+    const since = cur ? Date.now() - cur * 86400000 : 0;
+    const per = {};
+    let revenue = 0, costShare = 0;
+    for (const e of book) {
+      if (e.type !== "craft") continue;
+      for (const sl of e.sales || []) {
+        if (sl.at < since) continue;
+        const cs = e.cost * sl.pieces / Math.max(1, e.pieces);
+        const p = (per[e.label] = per[e.label] || { label: e.label, pieces: 0, revenue: 0, cost: 0, markets: new Set() });
+        p.pieces += sl.pieces; p.revenue += sl.amount; p.cost += cs;
+        if (sl.loc) p.markets.add(sl.loc);
+        revenue += sl.amount; costShare += cs;
+      }
+    }
+    const list = Object.values(per).map((p) => Object.assign(p, { profit: p.revenue - p.cost, margin: p.cost ? (p.revenue - p.cost) / p.cost * 100 : null }))
+      .sort((a, b) => b.profit - a.profit);
+    const t = $("eval-tiles");
+    t.innerHTML = "";
+    const prof = revenue - costShare;
+    t.append(tile(S(prof), "echter Gewinn", prof > 0 ? "good" : prof < 0 ? "bad" : ""),
+      tile(costShare ? C.fmtNum(prof / costShare * 100) + " %" : "–", "Ø Marge"),
+      tile(S(revenue), "Umsatz (netto)"), tile(list.length ? list[0].label.replace(/ \(T.*\)$/, "") : "–", "bestes Item"));
+    const box = $("eval-list");
+    box.innerHTML = "";
+    if (!list.length) { box.append(el("div", { class: "muted small" }, "Noch keine Verkäufe in diesem Zeitraum.")); return; }
+    list.forEach((p, i) => box.append(el("div", { class: "shop-item" },
+      el("div", { class: "t" }, el("div", { style: "font-weight:700" }, `${i + 1}. ${p.label}`),
+        el("div", { class: "small muted" }, `${S(p.pieces)} Stk verkauft · Ø ${S(p.revenue / p.pieces)}/Stk · ${[...p.markets].join(", ") || "–"}`)),
+      el("div", { style: "text-align:right" }, el("div", { class: "num " + (p.profit >= 0 ? "pos" : "neg"), style: "font-weight:800" }, S(p.profit)),
+        el("div", { class: "small muted" }, p.margin === null ? "" : C.fmtNum(p.margin) + " %")))));
+  }
+
+  // ------------------------------------------------------------ Laufende Aufträge
+  let orders = storage.get("orders", []);
+  const saveOrders = () => storage.set("orders", orders);
+  let orderDraft = null;
+  function openOrder(draft) {
+    fillItemList();
+    orderDraft = Object.assign({ side: "buy", id: null, qty: "", price: "", loc: C.CITIES[0], bookUid: null }, draft || {});
+    [...$("order-side").children].forEach((b) => b.classList.toggle("on", b.dataset.s === orderDraft.side));
+    $("order-item").value = orderDraft.id ? gd.label(orderDraft.id) : "";
+    $("order-qty").value = orderDraft.qty; $("order-price").value = orderDraft.price ? Math.round(orderDraft.price) : "";
+    const sel = $("order-loc"); sel.innerHTML = "";
+    C.MARKETS.forEach((m) => sel.append(el("option", { value: m, textContent: m })));
+    sel.value = orderDraft.loc;
+    orderInfo();
+    $("order-sheet").classList.add("on"); document.body.style.overflow = "hidden";
+  }
+  function closeOrder() { $("order-sheet").classList.remove("on"); document.body.style.overflow = ""; }
+  function orderInfo() {
+    const q = Number($("order-qty").value) || 0, p = Number($("order-price").value) || 0;
+    const side = [...$("order-side").children].find((b) => b.classList.contains("on")).dataset.s;
+    $("order-info").textContent = side === "buy"
+      ? `Gebundenes Silber: ${S(q * p * (1 + settings.setup_fee / 100))} (inkl. ${C.fmtNum(settings.setup_fee)} % Einstellgebühr)`
+      : `Warenwert: ${S(q * p)} · nach Steuer und Gebühr ca. ${S(q * p * (1 - C.sellFee(settings, "order")))}`;
+  }
+  function saveOrder() {
+    const id = idFromLabel($("order-item").value) || orderDraft.id;
+    const qty = Math.floor(Number($("order-qty").value) || 0), price = Math.round(Number($("order-price").value) || 0);
+    if (!id) { alert("Bitte ein Item aus der Liste auswählen."); return; }
+    if (!qty || !price) { alert("Bitte Stück und Preis eingeben."); return; }
+    const side = [...$("order-side").children].find((b) => b.classList.contains("on")).dataset.s;
+    orders.push({ uid: uid(), side, id, qty, filled: 0, price, loc: $("order-loc").value, at: Date.now(), bookUid: orderDraft.bookUid || null });
+    saveOrders(); closeOrder();
+    if (ui.view === "shop") showListPane("orders");
+    else setStatus(`📑 Auftrag gespeichert – zu finden unter Liste → Aufträge`);
+  }
+  /** Ausgeführte Menge verbuchen: Kauf -> Lager + Ausgabe, Verkauf -> Verkauf im Buch */
+  function fillOrder(o, n) {
+    n = Math.min(n, o.qty - o.filled);
+    if (n <= 0) return;
+    o.filled += n;
+    if (o.side === "buy") {
+      const st = stock[o.id] || { qty: 0, value: o.price };
+      st.value = st.qty ? (st.qty * st.value + n * o.price) / (st.qty + n) : o.price;
+      st.qty += n; stock[o.id] = st; saveStock();
+      book.push({ uid: uid(), type: "expense", note: `Kaufauftrag: ${S(n)} × ${gd.label(o.id)} (${o.loc})`, amount: Math.round(n * o.price * (1 + settings.setup_fee / 100)), at: Date.now() });
+    } else {
+      const amount = Math.round(n * o.price * (1 - C.sellFee(settings, "order")));
+      const e = o.bookUid && book.find((b) => b.uid === o.bookUid);
+      if (e) e.sales.push({ pieces: n, amount, unit: o.price, loc: o.loc, mode: "order", at: Date.now() });
+      else book.push({ uid: uid(), type: "income", note: `Verkaufsauftrag: ${S(n)} × ${gd.label(o.id)} (${o.loc})`, amount, at: Date.now() });
+    }
+    saveBook(); saveOrders();
+  }
+  function renderOrders() {
+    const list = $("orders-list");
+    list.innerHTML = "";
+    let tiedBuy = 0, goods = 0, outbid = 0;
+    const open = orders.filter((o) => o.filled < o.qty);
+    for (const o of open) {
+      const rest = o.qty - o.filled;
+      let status = "", cls = "muted";
+      if (o.side === "buy") {
+        tiedBuy += rest * o.price * (1 + settings.setup_fee / 100);
+        const [best, src] = store.get(o.id, o.loc, "buy");
+        if (best && src !== "alt") { if (best > o.price) { status = `⚠ überboten – bestes Gebot ${S(best)}`; cls = "neg"; outbid++; } else { status = "✔ höchstes Gebot"; cls = "pos"; } }
+      } else {
+        goods += rest * o.price;
+        const [low, src] = store.get(o.id, o.loc, "sell");
+        if (low && src !== "alt") { if (low < o.price) { status = `⚠ unterboten – günstigstes Angebot ${S(low)}`; cls = "neg"; outbid++; } else { status = "✔ günstigstes Angebot"; cls = "pos"; } }
+      }
+      list.append(el("div", { class: "shop-item", style: "flex-wrap:wrap" },
+        el("div", { class: "t" },
+          el("div", { style: "font-weight:700" }, `${o.side === "buy" ? "🟢 Kauf" : "🔵 Verkauf"} · ${S(rest)} × ${gd.label(o.id)}`),
+          el("div", { class: "small muted" }, `${o.loc} · ${S(o.price)}/Stk · ${o.filled ? S(o.filled) + " schon ausgeführt · " : ""}seit ${C.fmtAge(o.at / 1000)}`),
+          status ? el("div", { class: "small " + cls }, status) : el("div", { class: "small muted" }, "„Preise prüfen“ zeigt, ob du überboten wurdest")),
+        el("div", { class: "row", style: "gap:6px;width:100%;justify-content:flex-end" },
+          el("button", { class: "btn", on: { click: () => { const v = window.prompt(`Wie viele wurden ausgeführt? (max. ${rest})`, String(rest)); if (v === null) return; fillOrder(o, Math.floor(Number(v) || 0)); renderOrders(); } } }, "Ausgeführt"),
+          el("button", { class: "icon-btn", title: "Preis ändern", on: { click: () => { const v = window.prompt("Neuer Preis pro Stück", String(o.price)); if (v === null) return; o.price = Math.round(Number(v.replace(/[.\s]/g, "")) || o.price); saveOrders(); renderOrders(); } } }, "✎"),
+          el("button", { class: "icon-btn", title: "Zurückziehen", on: { click: () => { if (confirm("Auftrag zurückgezogen / löschen?")) { orders = orders.filter((x) => x !== o); saveOrders(); renderOrders(); } } } }, "✕"))));
+    }
+    if (!open.length) list.append(el("div", { class: "empty" }, "Keine offenen Aufträge. „+ Auftrag“ tippen – oder im Buch bei unverkaufter Ware „Als Verkaufsauftrag“."));
+    const done = orders.filter((o) => o.filled >= o.qty).length;
+    const t = $("orders-tiles"); t.innerHTML = "";
+    t.append(tile(S(tiedBuy), "Silber in Kaufaufträgen"), tile(S(goods), "Warenwert in Verkaufsaufträgen"),
+      tile(String(open.length), "offene Aufträge"), tile(String(outbid), "überboten/unterboten", outbid ? "bad" : open.length ? "good" : ""));
+    if (done) t.append();
+  }
+  function checkOrders() {
+    const byLoc = {};
+    orders.filter((o) => o.filled < o.qty).forEach((o) => (byLoc[o.loc] = byLoc[o.loc] || new Set()).add(o.id));
+    const jobs = Object.entries(byLoc).map(([loc, set]) => [[...set], [loc]]);
+    if (jobs.length) runJobs(jobs, () => renderOrders());
+  }
+
+  function refreshAll() {
+    render();
+    if (ui.view === "alch") renderAlch();
+    if (ui.view === "craft") renderCraft();
+    if (ui.view === "shop") showListPane(ui.listPane || "shop");
   }
 
   // ------------------------------------------------------------ Einstellungen
@@ -1541,6 +1848,18 @@
     $("book-income").addEventListener("click", () => addManual("income"));
     $("book-export").addEventListener("click", exportBook);
     $("sale-close").addEventListener("click", closeSale);
+    $("order-close").addEventListener("click", closeOrder);
+    $("order-save").addEventListener("click", saveOrder);
+    [...$("order-side").children].forEach((b) => b.addEventListener("click", () => {
+      [...$("order-side").children].forEach((x) => x.classList.toggle("on", x === b)); orderInfo();
+    }));
+    ["order-qty", "order-price"].forEach((id) => $(id).addEventListener("input", orderInfo));
+    $("order-add").addEventListener("click", () => openOrder({}));
+    $("orders-check").addEventListener("click", checkOrders);
+    $("stock-search").addEventListener("change", () => {
+      const id = idFromLabel($("stock-search").value);
+      if (id) { $("stock-search").value = ""; editStock(id); }
+    });
     $("sale-save").addEventListener("click", saveSale);
     ["sale-pieces", "sale-price"].forEach((id) => $(id).addEventListener("input", saleCalc));
     $("sale-mode").addEventListener("change", saleCalc);
@@ -1556,14 +1875,20 @@
       const o = aOpts(id);
       const pc = aPieces(id, o);
       const plan = C.cheapPlan(gd, store, settings, id, Math.max(pc.pieces, gd.recipes[id].amount), o);
-      logCraft({ id, pieces: plan.pieces, cost: plan.buyCost, expected: plan.complete ? plan.res.revenue : null,
+      if (logCraft({ id, pieces: plan.pieces, cost: plan.buyCost, expected: plan.complete ? plan.res.revenue : null,
         where: `${o.city} → ${plan.best ? plan.best.loc : o.sellLocs[0]}`,
-        price: plan.best ? plan.best.price : null, loc: plan.best ? plan.best.loc : o.sellLocs[0], mode: plan.best ? plan.best.mode : o.sellMode });
+        price: plan.best ? plan.best.price : null, loc: plan.best ? plan.best.loc : o.sellLocs[0], mode: plan.best ? plan.best.mode : o.sellMode })) {
+        const used = {}; plan.buyList.forEach((b) => { if (b.fromStock) used[b.item] = b.fromStock; });
+        consumeStock(used); renderAlch();
+      }
     });
     $("c-done").addEventListener("click", () => {
       const k = craftCalc(); if (!k) return;
-      logCraft({ id: ui.cItem, pieces: k.crafts * k.rec.amount, cost: k.buyCost, expected: k.res.complete ? k.res.revenue : null,
-        where: `${k.city} → ${k.sellLoc}`, price: k.best ? k.best.price : null, loc: k.sellLoc, mode: k.mode });
+      if (logCraft({ id: ui.cItem, pieces: k.crafts * k.rec.amount, cost: k.buyCost, expected: k.res.complete ? k.res.revenue : null,
+        where: `${k.city} → ${k.sellLoc}`, price: k.best ? k.best.price : null, loc: k.sellLoc, mode: k.mode })) {
+        const used = {}; k.plan.forEach((pl) => { if (pl.fromStock) used[pl.id] = pl.fromStock; });
+        consumeStock(used); renderCraft();
+      }
     });
     $("calc-done").addEventListener("click", () => {
       const r = calcRow(); if (!r) return;
@@ -1699,9 +2024,11 @@
   async function start() {
     wire();
     try {
-      const [res, al] = await Promise.all([fetch("data/recipes_all.json"), fetch("data/alchemy.json")]);
+      const [res, al, jr] = await Promise.all([fetch("data/recipes_all.json"), fetch("data/alchemy.json"), fetch("data/journals.json")]);
       gd = new C.GameData(await res.json());
       alchData = await al.json();
+      journals = await jr.json();
+      for (const [k, v] of Object.entries(journals.names)) if (!gd.names[k]) gd.names[k] = v;
       for (const [k, v] of Object.entries(alchData.names)) if (!gd.names[k]) gd.names[k] = v;
     } catch (e) {
       setStatus("Rezeptdaten konnten nicht geladen werden: " + e.message, true);

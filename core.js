@@ -655,9 +655,19 @@
   function makeSolver(gd, store, s, ctx) {
     const kind = ctx.buyMode === "instant" ? "sell" : "buy";
     const memo = {};
-    const market = (item) => {
+    const stock = ctx.stock || {}, override = ctx.override || {};
+    /** echter Marktpreis (ohne Lager) */
+    const realMarket = (item) => {
       const [p, src, ts] = store.get(item, ctx.buyCity, kind, ctx.maxAge);
       return p && src !== "alt" ? { price: buyUnitCost(s, p, ctx.buyMode), src, ts } : null;
+    };
+    /** Preis für die Wegsuche: Mischpreis (2. Durchlauf) > Lagerwert > Markt */
+    const market = (item) => {
+      if (override[item] !== undefined && override[item] !== null) return { price: override[item], src: "mix", ts: null };
+      const m = realMarket(item);
+      const st = stock[item];
+      if (st && st.qty > 0 && (!m || st.value < m.price)) return { price: st.value, src: "lager", ts: null };
+      return m;
     };
     const altsOf = (item) => {
       const list = (ctx.alts[item] || []).map((a) => Object.assign({ cat: null }, a));
@@ -698,43 +708,70 @@
         expand(node.children[i], buyAmount(cnt, crafts, node.rrr, !!ret)[0], out, (depth || 0) + 1);
       });
     }
-    return { cheapest, expand, market };
+    return { cheapest, expand, market, realMarket };
   }
 
-  /** Kompletter Plan für ein Produkt (Trank/Essen) mit Stückzahl. */
+  /**
+   * Kompletter Plan für ein Produkt (Trank/Essen) mit Stückzahl.
+   * o.stock = {item: {qty, value}}: Lagerbestand wird zuerst verbraucht (mit seinem Wert, z. B. 0 bei selbst gesammelt).
+   */
   function cheapPlan(gd, store, s, id, pieces, o) {
     const rec = gd.recipes[id];
     if (!rec) return null;
-    const solver = makeSolver(gd, store, s, o);
+    const stock = o.stock || {};
     const crafts = craftsFor(rec, pieces);
     const rrr = returnRate(productionBonus(s, o.city, rec.cat, o.focus, o.daily));
-    const ings = rec.res.map(([rid, cnt, ret]) => {
-      const node = solver.cheapest(rid, 0);
-      const qty = buyAmount(cnt, crafts, rrr, !!ret)[0];
-      return { id: rid, cnt, ret: !!ret, node, qty, full: cnt * crafts };
-    });
-    const complete = ings.every((x) => x.node.unit !== null);
-    const prices = {};
-    ings.forEach((x) => { prices[x.id] = x.node.unit; });
     const best = bestSale(store, s, id, o.sellLocs, o.sellMode, o.maxAge);
+
+    function run(override) {
+      const solver = makeSolver(gd, store, s, Object.assign({}, o, { stock, override }));
+      const ings = rec.res.map(([rid, cnt, ret]) => {
+        const node = solver.cheapest(rid, 0);
+        const qty = buyAmount(cnt, crafts, rrr, !!ret)[0];
+        return { id: rid, cnt, ret: !!ret, node, qty, full: cnt * crafts };
+      });
+      const complete = ings.every((x) => x.node.unit !== null);
+      const out = { buy: {}, steps: [] };
+      if (complete) ings.forEach((x) => solver.expand(x.node, x.qty, out, 0));
+      return { solver, ings, complete, out };
+    }
+
+    // 1. Durchlauf: Weg finden (Lager zählt mit seinem Wert)
+    let r1 = run({});
+    // Mischpreise für Blätter: erst Lager, Rest zum Marktpreis
+    const override = {};
+    let usesStock = false;
+    for (const [item, qty] of Object.entries(r1.out.buy)) {
+      const st = stock[item];
+      if (!st || st.qty <= 0) continue;
+      usesStock = true;
+      const from = Math.min(qty, st.qty), rest = qty - from;
+      const m = r1.solver.realMarket(item);
+      override[item] = rest > 0 ? (m ? (from * st.value + rest * m.price) / qty : null) : st.value;
+    }
+    const r = usesStock ? run(override) : r1;
+    const prices = {};
+    r.ings.forEach((x) => { prices[x.id] = x.node.unit; });
     const res = calcCraft(rec, crafts, rrr, prices, best ? best.price : null, sellFee(s, best ? best.mode : o.sellMode), 0, o.focus);
-    // Einkaufsliste entlang der billigsten Wege
-    const out = { buy: {}, steps: [] };
-    if (complete) ings.forEach((x) => solver.expand(x.node, x.qty, out, 0));
-    let buyCost = complete ? 0 : null;
-    const buyList = Object.entries(out.buy).map(([item, qty]) => {
-      const m = solver.market(item);
-      const cost = m ? qty * m.price : null;
+
+    let buyCost = r.complete ? 0 : null, stockValue = 0;
+    const buyList = Object.entries(r.out.buy).map(([item, qty]) => {
+      const st = stock[item];
+      const fromStock = st && st.qty > 0 ? Math.min(qty, st.qty) : 0;
+      const buy = qty - fromStock;
+      const m = r.solver.realMarket(item);
+      const cost = buy > 0 ? (m ? buy * m.price : null) : 0;
       if (cost === null) buyCost = null; else if (buyCost !== null) buyCost += cost;
-      return { item, qty, price: m ? m.price : null, cost };
+      stockValue += fromStock * (st ? st.value : 0);
+      return { item, qty, fromStock, buy, price: m ? m.price : null, cost, stockUnit: st ? st.value : null };
     }).sort((a, b) => (b.cost || 0) - (a.cost || 0));
     // Ersparnis gegenüber "alles direkt kaufen"
     let directCost = 0, directOk = true;
-    ings.forEach((x) => { const m = solver.market(x.id); if (!m) directOk = false; else directCost += m.price * x.qty; });
+    r.ings.forEach((x) => { const m = r.solver.realMarket(x.id); if (!m) directOk = false; else directCost += m.price * x.qty; });
     return {
-      id, rec, crafts, pieces: crafts * rec.amount, rrr, ings, res, best, complete: complete && !!best,
-      buyList, steps: out.steps, buyCost, directCost: directOk ? directCost : null, solver,
-      unitCost: complete ? res.cost / (crafts * rec.amount) : null,
+      id, rec, crafts, pieces: crafts * rec.amount, rrr, ings: r.ings, res, best, complete: r.complete && !!best,
+      buyList, steps: r.out.steps, buyCost, stockValue, directCost: directOk ? directCost : null, solver: r.solver,
+      unitCost: r.complete ? res.cost / (crafts * rec.amount) : null,
     };
   }
 

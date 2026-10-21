@@ -464,7 +464,8 @@
     while (done < crafts) {
       const k = Math.min(crafts - done, Math.floor(stock / cnt + 1e-9));
       if (k <= 0) break;
-      stock -= k * cnt * (1 - rrr);
+      // Das Spiel gibt nur ganze Stücke zurück → abrunden (sicher, nie zu wenig)
+      stock = stock - k * cnt + Math.floor(k * cnt * rrr + 1e-9);
       done += k;
     }
     return [done, stock];
@@ -484,12 +485,43 @@
     return [lo, simulate(lo, cnt, crafts, rrr)[1]];
   }
 
+  /**
+   * Echtes Craften im Spiel nachspielen: pro Runde so viele Crafts, wie die knappste Zutat erlaubt,
+   * Rückgabe nur in ganzen Stücken (abgerundet). res = [[id, cnt, ret], …], buy = Mengen je Zutat.
+   */
+  function jointSim(res, buy, crafts, rrr) {
+    const st = buy.slice();
+    let done = 0, lim = -1;
+    while (done < crafts) {
+      let k = crafts - done;
+      lim = -1;
+      res.forEach(([, c], i) => { const can = Math.floor(st[i] / c + 1e-9); if (can < k) { k = can; lim = i; } });
+      if (k <= 0) break;
+      res.forEach(([, c, ret], i) => { st[i] -= k * c; if (ret && rrr > 0) st[i] += Math.floor(k * c * rrr - 1e-9); });
+      done += k;
+    }
+    return { done, left: st, lim };
+  }
+
+  /** Kaufmengen für ALLE Zutaten zusammen, sodass im Spiel wirklich `crafts` Crafts klappen. */
+  function jointBuy(res, crafts, rrr) {
+    crafts = Math.floor(crafts);
+    if (crafts <= 0) return res.map(() => 0);
+    const buy = res.map(([, c, ret]) => buyAmount(c, crafts, rrr, !!ret)[0]);
+    for (let guard = 0; guard < 5000; guard++) {
+      const r = jointSim(res, buy, crafts, rrr);
+      if (r.done >= crafts) return buy;
+      const c = res[r.lim][1];
+      buy[r.lim] += Math.max(1, c - r.left[r.lim]);   // genau so viel, dass eine Runde mehr geht
+    }
+    return res.map(([, c]) => c * crafts);
+  }
+
   /** Pro Zutat: was du kaufen musst, damit am Ende (fast) nichts übrig bleibt. */
   function buyPlan(recipe, crafts, rrr) {
-    return recipe.res.map(([id, cnt, ret]) => {
-      const [buy, rest] = buyAmount(cnt, crafts, rrr, !!ret);
-      return { id, cnt, full: cnt * crafts, buy, rest, ret: !!ret };
-    });
+    const buys = jointBuy(recipe.res, crafts, rrr);
+    const sim = jointSim(recipe.res, buys, Math.floor(crafts), rrr);
+    return recipe.res.map(([id, cnt, ret], i) => ({ id, cnt, full: cnt * crafts, buy: buys[i], rest: sim.left[i], ret: !!ret }));
   }
 
   /** Wie viele Crafts für `pieces` Stück (z. B. Tränke: 5 Stück pro Craft). */
@@ -501,8 +533,9 @@
   /** Einkaufsmengen und Kosten für n Refines (Rückgabe wird weiterverwendet). */
   function needs(r, n, focus) {
     const rrr = r[focus ? "rrr_f" : "rrr_nf"];
-    const raw = buyAmount(r.raw_cnt, n, rrr)[0];
-    const prev = r.prev ? buyAmount(r.prev_cnt, n, rrr)[0] : 0;
+    const jb = jointBuy(r.prev ? [["raw", r.raw_cnt, 1], ["prev", r.prev_cnt, 1]] : [["raw", r.raw_cnt, 1]], n, rrr);
+    const raw = jb[0];
+    const prev = r.prev ? jb[1] : 0;
     const pu = r[focus ? "prev_f" : "prev_nf"];
     let cost = null;
     if (r.raw_price !== null && (!r.prev || pu !== null)) cost = raw * r.raw_price + (r.prev ? prev * pu : 0);
@@ -598,7 +631,8 @@
   /** Einkaufskosten (Silber, das man vorab braucht) für n Crafts. */
   function upfrontCost(ev, n) {
     let t = 0;
-    for (const [rid, cnt, ret] of ev.rec.res) t += buyAmount(cnt, n, ev.rrr, !!ret)[0] * ev.prices[rid];
+    const jb = jointBuy(ev.rec.res, n, ev.rrr);
+    ev.rec.res.forEach(([rid], i) => { t += jb[i] * ev.prices[rid]; });
     return t;
   }
 
@@ -704,8 +738,9 @@
       if (node.how !== "craft") { out.buy[node.item] = (out.buy[node.item] || 0) + qty; return; }
       const crafts = Math.ceil(qty / node.alt.amount);
       out.steps.push({ item: node.item, qty, crafts, out: crafts * node.alt.amount, alt: node.alt, depth: depth || 0 });
+      const jb = jointBuy(node.alt.res, crafts, node.rrr);
       node.alt.res.forEach(([rid, cnt, ret], i) => {
-        expand(node.children[i], buyAmount(cnt, crafts, node.rrr, !!ret)[0], out, (depth || 0) + 1);
+        expand(node.children[i], jb[i], out, (depth || 0) + 1);
       });
     }
     return { cheapest, expand, market, realMarket };
@@ -725,9 +760,10 @@
 
     function run(override) {
       const solver = makeSolver(gd, store, s, Object.assign({}, o, { stock, override }));
-      const ings = rec.res.map(([rid, cnt, ret]) => {
+      const jb = jointBuy(rec.res, crafts, rrr);
+      const ings = rec.res.map(([rid, cnt, ret], i) => {
         const node = solver.cheapest(rid, 0);
-        const qty = buyAmount(cnt, crafts, rrr, !!ret)[0];
+        const qty = jb[i];
         return { id: rid, cnt, ret: !!ret, node, qty, full: cnt * crafts };
       });
       const complete = ings.every((x) => x.node.unit !== null);
@@ -772,6 +808,10 @@
       id, rec, crafts, pieces: crafts * rec.amount, rrr, ings: r.ings, res, best, complete: r.complete && !!best,
       buyList, steps: r.out.steps, buyCost, stockValue, directCost: directOk ? directCost : null, solver: r.solver,
       unitCost: r.complete ? res.cost / (crafts * rec.amount) : null,
+      focusNeed: o.focus ? rec.focus * crafts : 0,
+      // Wie viele Crafts gehen mit diesem Einkauf OHNE Fokus? (Warnung, falls Fokus fehlt)
+      noFocusCrafts: o.focus ? jointSim(rec.res, r.ings.map((x) => x.qty), crafts,
+        returnRate(productionBonus(s, o.city, rec.cat, false, o.daily))).done : crafts,
     };
   }
 
@@ -781,7 +821,7 @@
     parseDate, ageHours, fmtAge, fmtSilver, fmtNum, ceilInt,
     GameData, PriceStore, bonusCityFor, productionBonus, returnRate, focusCost,
     salesTax, sellFee, buyUnitCost, salePrice, bestSale, volumeOk, calcCraft,
-    refineTable, needs, refineAmount, refineDetail, simulate, buyAmount, buyPlan, craftsFor,
+    refineTable, needs, refineAmount, refineDetail, simulate, buyAmount, jointSim, jointBuy, buyPlan, craftsFor,
     evalCraft, upfrontCost, planSilver, makeSolver, cheapPlan,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = Core;

@@ -251,3 +251,5 @@ table.res tr.key td.pos { color: var(--pos); } table.res tr.key td.neg { color: 
 .toast.note { background: var(--pos); }
 
 .rank { width: 26px; height: 26px; border-radius: 50%; background: var(--gold); color: #1a1205; font-weight: 800; font-size: 13px; display: flex; align-items: center; justify-content: center; flex: none; margin-top: 2px; }
+
+.plan-note { background: var(--panel2); border: 1px solid var(--line); border-left: 4px solid var(--gold); border-radius: 10px; padding: 8px 10px; margin: 8px 0; font-size: 13px; line-height: 1.45; }

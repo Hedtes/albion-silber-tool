@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const C = window.Core;
-  const VERSION = "1.7.2";
+  const VERSION = "1.7.3";
   const $ = (id) => document.getElementById(id);
   const S = C.fmtSilver;
   const SLOW_DAYS = 7;
@@ -783,9 +783,10 @@
     const lines = [];
     if (!node || node.how !== "craft" || qty <= 0) return lines;
     const crafts = Math.ceil(qty / node.alt.amount);
-    const parts = node.alt.res.map(([rid, cnt, ret]) => `${S(buyAmount2(cnt, crafts, node.rrr, ret))} × ${gd.label(rid)}`);
+    const jb = C.jointBuy(node.alt.res, crafts, node.rrr);
+    const parts = node.alt.res.map(([rid], i) => `${S(jb[i])} × ${gd.label(rid)}`);
     const isShred = node.alt.res.length === 1 && node.alt.amount > 1;
-    const srcQty = isShred ? buyAmount2(node.alt.res[0][1], crafts, node.rrr, node.alt.res[0][2]) : 0;
+    const srcQty = isShred ? jb[0] : 0;
     lines.push(el("div", { class: "step" }, isShred
       ? `${S(srcQty)} × ${gd.label(node.alt.res[0][0])} ${node.item === "T1_FISHCHOPS" ? "zerkleinern" : "schreddern"} → ${S(crafts * node.alt.amount)} × ${gd.label(node.item)} (je ${node.alt.amount}${node.alt.res[0][2] ? ", mit Rückgabe" : ""})`
       : `${S(crafts * node.alt.amount)} × ${gd.label(node.item)} herstellen aus ${parts.join(" + ")}`));
@@ -802,12 +803,22 @@
           ` (${ranked.length} Quellen mit Preis)`));
       }
     }
-    node.alt.res.forEach(([rid, cnt, ret], i) => {
-      describeNode(node.children[i], buyAmount2(cnt, crafts, node.rrr, ret), solver, depth + 1).forEach((l) => lines.push(l));
+    node.alt.res.forEach(([rid], i) => {
+      describeNode(node.children[i], jb[i], solver, depth + 1).forEach((l) => lines.push(l));
     });
     return lines;
   }
-  const buyAmount2 = (cnt, crafts, rrr, ret) => C.buyAmount(cnt, crafts, rrr, !!ret)[0];
+
+  /** Klarer Hinweis, wofür der Einkauf gerechnet ist – und was passiert, wenn der Fokus fehlt. */
+  function planNote(city, focus, rrr, focusNeed, nfCrafts, crafts, amount) {
+    let h = `<div class="plan-note">Gerechnet für: <b>Craften in ${city}</b> · <b>${focus ? "MIT Fokus" : "ohne Fokus"}</b> · Rücklauf ${C.fmtNum(rrr * 100)} %`;
+    if (focus) {
+      h += `<br>Du brauchst <b>${S(focusNeed)} Fokus</b> (ohne Fokus-Effizienz).`;
+      if (nfCrafts < crafts) h += `<div class="neg" style="margin-top:4px">⚠ Craftest du <b>ohne Fokus</b> oder in einer anderen Stadt, reicht das Material nur für ca. <b>${S(nfCrafts * amount)}</b> statt ${S(crafts * amount)} Stück.</div>`;
+    }
+    h += `<div class="muted" style="margin-top:4px">Die Rückgabe der letzten Runde bleibt immer übrig (weniger als 1 Craft) – leg sie ins 📦 Lager, dann wird sie beim nächsten Mal mitgerechnet.</div></div>`;
+    return h;
+  }
 
   function renderAlch() {
     const id = aId();
@@ -911,10 +922,11 @@
           it.buy > 0 ? el("button", { class: "icon-btn", title: "Als Kaufauftrag", on: { click: () => openOrder({ side: "buy", id: it.item, qty: it.buy, price: bp ? bp + 1 : it.price, loc: o.buyCity }) } }, "📑") : null)));
     });
     const sp = plan.directCost !== null && plan.buyCost !== null ? plan.directCost - plan.buyCost : null;
-    $("a-buy-info").innerHTML = plan.buyCost === null ? "Noch nicht alle Preise vorhanden." :
+    $("a-buy-info").innerHTML = planNote(o.city, o.focus, plan.rrr, plan.focusNeed, plan.noFocusCrafts, plan.crafts, rec.amount) +
+      (plan.buyCost === null ? "Noch nicht alle Preise vorhanden." :
       `Einkauf gesamt <b>${S(plan.buyCost)}</b> Silber` + (plan.stockValue ? ` · aus dem Lager: Wert ${S(plan.stockValue)}` : "") +
       (sp > 0 ? ` · <span class="pos">${S(sp)} günstiger</span> als alle Zutaten direkt zu kaufen (${S(plan.directCost)})` : "") +
-      `<br>📦 = ins Lager · 📑 = als Kaufauftrag merken`;
+      `<br>📦 = ins Lager · 📑 = als Kaufauftrag merken`);
     renderAlch.text = `Einkauf für ${S(plan.pieces)} × ${gd.label(id)} (${o.buyCity})\n\n` +
       plan.buyList.map((it) => `${S(it.qty)} × ${gd.label(it.item)}${it.cost !== null ? " – " + S(it.cost) : ""}`).join("\n") +
       (plan.steps.length ? "\n\nSchritte:\n" + plan.steps.slice().reverse().map((s) => `${S(s.out)} × ${gd.label(s.item)}`).join("\n") : "") +
@@ -1073,6 +1085,13 @@
     // Materialien
     const box = $("c-mats");
     box.innerHTML = "";
+    {
+      const nfR = C.returnRate(C.productionBonus(settings, k.city, rec.cat, false, Number(ui.cDaily) || 0));
+      const nf = ui.cFocus ? C.jointSim(rec.res, k.plan.map((p) => p.buy), k.crafts, nfR).done : k.crafts;
+      const d = document.createElement("div");
+      d.innerHTML = planNote(k.city, ui.cFocus, k.rrr, ui.cFocus ? rec.focus * k.crafts : 0, nf, k.crafts, rec.amount);
+      box.append(d.firstElementChild);
+    }
     for (const pl of k.plan) {
       const rest = !pl.ret ? "keine Rückgabe" : `Rest ~${Math.round(pl.rest)}`;
       box.append(el("div", { class: "price" },
@@ -1193,7 +1212,9 @@
     return { uid: uid(), at: Date.now(), src: "Crafting", id: ui.cItem, pieces: k.crafts * k.rec.amount, crafts: k.crafts,
       city: k.city, buyCity: k.buy, sellLoc: k.sellLoc, sellMode: k.mode, focus: !!ui.cFocus,
       mats: k.plan.map((pl) => mat(pl.id, pl.buy, pl.fromStock, pl.buyNet, pl.price, pl.cost, k.buy)), steps: [],
-      cost: k.buyCost, price: k.best ? k.best.price : null,
+      cost: k.buyCost, price: k.best ? k.best.price : null, rrr: k.rrr, focusNeed: ui.cFocus ? k.rec.focus * k.crafts : 0,
+      nfPieces: ui.cFocus ? C.jointSim(k.rec.res, k.plan.map((x) => x.buy), k.crafts,
+        C.returnRate(C.productionBonus(settings, k.city, k.rec.cat, false, Number(ui.cDaily) || 0))).done * k.rec.amount : null,
       revenue: k.res.complete ? k.res.revenue : null, profit: k.res.complete ? k.res.profit : null };
   }
   function projectFromAlch(id, o, plan) {
@@ -1203,6 +1224,7 @@
     return { uid: uid(), at: Date.now(), src: "Tränke & Essen", id, pieces: plan.pieces, crafts: plan.crafts,
       city: o.city, buyCity: o.buyCity, sellLoc, sellMode: plan.best ? plan.best.mode : o.sellMode, focus: !!o.focus,
       mats: plan.buyList.map((it) => mat(it.item, it.qty, it.fromStock, it.buy, it.price, it.cost, o.buyCity)), steps,
+      rrr: plan.rrr, focusNeed: plan.focusNeed, nfPieces: plan.noFocusCrafts * plan.rec.amount,
       cost: plan.buyCost, price: plan.best ? plan.best.price : null,
       revenue: plan.complete ? plan.res.revenue : null, profit: plan.complete ? plan.res.profit : null };
   }
@@ -1267,7 +1289,9 @@
         el("div", { class: "t" },
           el("div", { class: "proj-title" }, `${S(p.pieces)} × ${gd.label(p.id)}`),
           el("div", { class: "small muted" }, `aus ${p.src} · gespeichert ${fmtWhen(p.at)}`),
-          el("div", { class: "small" }, `Craften in ${p.city}${p.focus ? " mit Fokus" : ""} · Einkauf in ${p.buyCity} · Verkauf in ${p.sellLoc}`)),
+          el("div", { class: "small" }, `Craften in ${p.city}${p.focus ? " MIT Fokus" : " ohne Fokus"} · Einkauf in ${p.buyCity} · Verkauf in ${p.sellLoc}`),
+          p.focus ? el("div", { class: "small neg" }, `⚠ Nur mit Fokus${p.focusNeed ? " (" + S(p.focusNeed) + " Fokus)" : ""} in ${p.city} reicht das Material` +
+            (p.nfPieces && p.nfPieces < p.pieces ? ` – ohne Fokus nur für ca. ${S(p.nfPieces)} Stück.` : ".")) : null),
         el("button", { class: "icon-btn", title: "Rezept löschen", on: { click: () => {
           if (confirm(`Rezept „${S(p.pieces)} × ${gd.label(p.id)}“ löschen?\n(Im Buch wird nichts eingetragen.)`)) { projects = projects.filter((x) => x !== p); saveProjects(); renderShop(); }
         } } }, "🗑")),
@@ -1315,6 +1339,7 @@
         el("div", {}, el("b", {}, `${S(p.crafts)} Crafts → ${S(p.pieces)} × ${gd.label(p.id)}`), ` in ${p.city}`),
         el("div", { class: "small" }, `Einkauf geplant ${S(p.cost)} · schon ausgegeben ${S(spent)}`),
         el("div", { class: "small" }, `Verkauf geplant: ${p.sellLoc}${p.price ? " · ca. " + S(p.price) + " pro Stück" : ""}`),
+        el("div", { class: "small muted" }, "Am Ende bleibt die Rückgabe der letzten Runde übrig (unter 1 Craft) – ab ins 📦 Lager."),
         p.profit !== null ? el("div", { class: "small" }, "Erwarteter Gewinn: ",
           el("b", { class: p.profit > 0 ? "pos" : "neg" }, `${p.profit > 0 ? "+" : ""}${S(p.profit)} Silber`)) : null),
       el("div", { class: "proj-btns" },

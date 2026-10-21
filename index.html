@@ -191,6 +191,28 @@
 
   <!-- ===================================================== Crafting -->
   <section class="view" id="view-craft">
+    <details class="card opts" id="es-card">
+      <summary><b>✨ Verzauber-Scan</b> <span class="muted small">– lohnende Verzauberungen finden</span></summary>
+      <div class="grid" style="margin-top:8px">
+        <div class="field full"><label>Gruppen</label><div class="mini-chips" id="es-groups"></div></div>
+        <div class="field full"><label>Tiers</label><div class="mini-chips" id="es-tiers"></div></div>
+        <div class="field full"><label>Schritt</label><div class="mini-chips" id="es-steps"></div></div>
+        <div class="field full"><label>Weg</label><select id="es-route">
+          <option value="same">100 % sicher – kaufen, verzaubern, verkaufen in einer Stadt</option>
+          <option value="markets">Billigste Stadt kaufen → beste Stadt verkaufen</option>
+          <option value="bm">Billigste Stadt kaufen → bester Markt inkl. Black Market</option></select></div>
+        <div class="field"><label>Verkauf per</label><select id="es-sellmode">
+          <option value="instant">Sofortverkauf</option><option value="order">Verkaufsauftrag</option></select></div>
+        <div class="field"><label>Mind. Verkäufe/Tag</label><input id="es-vol" type="number" inputmode="decimal" value="1"></div>
+        <div class="field"><label>Max. Preisalter (Std.)</label><input id="es-age" type="number" inputmode="decimal" value="6"></div>
+        <div class="field"><label>Mind. Gewinn/Stk</label><input id="es-min" type="number" inputmode="numeric" value="0"></div>
+      </div>
+      <button class="btn primary block" id="es-run" style="margin-top:10px">🔍 Verzauberungen scannen</button>
+      <div class="progress"><div></div></div>
+      <div class="status"></div>
+      <div class="muted small" id="es-info" style="margin:6px 2px"></div>
+      <div id="es-list"></div>
+    </details>
     <div class="card">
       <div class="row">
         <input id="c-search" type="search" placeholder="Item suchen, z. B. „lebenstrank t4“" style="flex:1;min-width:0;padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--panel2);font-size:16px">

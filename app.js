@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const C = window.Core;
-  const VERSION = "1.6.0";
+  const VERSION = "1.6.1";
   const $ = (id) => document.getElementById(id);
   const S = C.fmtSilver;
   const SLOW_DAYS = 7;
@@ -76,7 +76,7 @@
   async function runJobs(jobs, done) {
     if (busy) { setStatus("Es läuft bereits ein Abruf …"); return; }
     busy = true; abort = new AbortController();
-    $("load-btn").disabled = true; $("shop-reload").disabled = true; $("c-load").disabled = true; $("s-run").disabled = true; $("a-load").disabled = true;
+    $("load-btn").disabled = true; $("shop-reload").disabled = true; $("c-load").disabled = true; $("s-run").disabled = true; $("a-load").disabled = true; $("es-run").disabled = true;
     let errors = 0;
     try {
       for (let k = 0; k < jobs.length; k++) {
@@ -97,7 +97,7 @@
       setStatus("Fehler beim Abruf: " + (e.message || e), true);
     } finally {
       busy = false; progress(0, 0);
-      $("load-btn").disabled = false; $("shop-reload").disabled = false; $("c-load").disabled = false; $("s-run").disabled = false; $("a-load").disabled = false;
+      $("load-btn").disabled = false; $("shop-reload").disabled = false; $("c-load").disabled = false; $("s-run").disabled = false; $("a-load").disabled = false; $("es-run").disabled = false;
       if (done) await done();
     }
   }
@@ -1761,6 +1761,124 @@
       `„Mehr als direkt verkaufen“ vergleicht mit dem Verkauf deines ${t(e.from)}-Items zum Preis oben. Ist der Wert positiv, bringt das Verzaubern zusätzliches Silber.`));
   }
 
+  // ------------------------------------------------------------ Verzauber-Scan
+  const ES_GROUPS = ["Taschen & Umhänge", "Waffen", "Rüstung", "Nebenhand", "Sammlerausrüstung"];
+  let esResult = null;
+  function esDefaults() {
+    if (!ui.esGroups) ui.esGroups = ["Taschen & Umhänge"];
+    if (!ui.esTiers) ui.esTiers = [4, 5, 6];
+    if (!ui.esSteps) ui.esSteps = [0];
+    if (!ui.esRoute) ui.esRoute = "same";
+    if (!ui.esSellMode) ui.esSellMode = "instant";
+    if (ui.esVol === undefined) ui.esVol = 1;
+    if (ui.esAge === undefined) ui.esAge = 6;
+    if (ui.esMin === undefined) ui.esMin = 0;
+  }
+  function esBases() {
+    return Object.keys(enchData.c).filter((b) => {
+      const r = gd.recipes[b];
+      return r && ui.esGroups.includes(r.group) && ui.esTiers.includes(r.tier);
+    });
+  }
+  function esLocs() {
+    const buy = ui.esRoute === "same" ? C.ROYAL_CITIES.concat(["Caerleon", "Brecilien"]) : C.CITIES;
+    const sell = ui.esRoute === "bm" ? C.MARKETS : C.CITIES;
+    return { buy, sell };
+  }
+  /** Bewertet alle gewählten Items: Item kaufen + Runen/Seelen/Relikte → höhere Stufe verkaufen. */
+  function esEvaluate() {
+    const age = Number(ui.esAge) || 6;
+    const { buy, sell } = esLocs();
+    const unit = (item, loc) => {
+      const [p, src] = store.get(item, loc, "sell", age);
+      return (p !== null && src !== "alt") || src === "manuell" ? C.buyUnitCost(settings, p, "instant") : null;
+    };
+    const out = [];
+    for (const b of esBases()) {
+      const r = gd.recipes[b], n = enchData.c[b];
+      for (const from of ui.esSteps) {
+        const to = from + 1;
+        const src = enchId(b, from), dst = enchId(b, to), mat = `T${r.tier}_${ENCH_MAT[from]}`;
+        let best = null;
+        const consider = (bc, sellLocs) => {
+          const ip = unit(src, bc), mp = unit(mat, bc);
+          if (ip === null || mp === null) return;
+          const sale = C.bestSale(store, settings, dst, sellLocs, ui.esSellMode, age);
+          if (!sale) return;
+          const cost = ip + n * mp, net = sale.price * (1 - C.sellFee(settings, sale.mode));
+          const profit = net - cost;
+          if (!best || profit > best.profit) best = { base: b, from, to, src, dst, mat, n, buyCity: bc, ip, mp, cost, sale, net, profit,
+            margin: cost ? profit / cost * 100 : 0, vol: sale.info ? sale.info.per_day : null };
+        };
+        if (ui.esRoute === "same") for (const c of buy) consider(c, [c]);
+        else for (const c of buy) consider(c, sell);
+        if (best) out.push(best);
+      }
+    }
+    return out.sort((a, b) => b.profit - a.profit);
+  }
+  async function esRun() {
+    esDefaults();
+    const bases = esBases();
+    if (!bases.length || !ui.esSteps.length) { setStatus("Bitte mindestens eine Gruppe, ein Tier und einen Schritt wählen", true); return; }
+    const { buy, sell } = esLocs();
+    const ids = new Set(), mats = new Set();
+    for (const b of bases) for (const f of ui.esSteps) {
+      ids.add(enchId(b, f)); ids.add(enchId(b, f + 1)); mats.add(`T${gd.recipes[b].tier}_${ENCH_MAT[f]}`);
+    }
+    const locs = [...new Set(buy.concat(sell))];
+    $("es-info").textContent = `${S(bases.length)} Items · ${ui.esSteps.length} Schritt(e) · ${locs.length} Märkte – lädt …`;
+    await runJobs([[[...mats].concat([...ids]), locs]], async () => {
+      // Verkaufszahlen nur für die besten Kandidaten nachladen
+      const cand = esEvaluate().filter((x) => x.profit > 0).slice(0, 40);
+      const hist = [...new Set(cand.map((x) => x.dst))];
+      if (hist.length) await runJobs([[hist, [...new Set(cand.map((x) => x.sale.loc))], "history"]], () => esRender());
+      else esRender();
+    });
+  }
+  function esRender() {
+    esDefaults();
+    const box = $("es-list");
+    if (!box) return;
+    box.innerHTML = "";
+    const all = esEvaluate();
+    const minVol = Number(ui.esVol) || 0, minP = Number(ui.esMin) || 0;
+    const list = all.filter((x) => x.profit > 0 && x.profit >= minP && (x.vol === null || x.vol === undefined || x.vol >= minVol)).slice(0, 40);
+    if (!all.length) { $("es-info").textContent = "Noch keine Preise – „Verzauberungen scannen“ tippen."; return; }
+    $("es-info").textContent = `${S(all.length)} Verzauberungen mit Preisen geprüft · ${list.length} lohnen sich` +
+      (list.length ? ` · Gewinn pro Stück · antippen öffnet den Rechner` : " – im Moment nichts im Plus. Andere Tiers/Gruppen oder Weg „Black Market“ probieren.");
+    for (const x of list) {
+      const t = (l) => `T${gd.recipes[x.base].tier}.${l}`;
+      const volTxt = x.vol === null || x.vol === undefined ? "Verkäufe/Tag ?" : `${C.fmtNum(x.vol, x.vol < 10 ? 1 : 0)} Verkäufe/Tag`;
+      box.append(el("div", { class: "shop-item", style: "cursor:pointer;display:block",
+        on: { click: () => { ui.eSrc = "buy"; ui.cBuy = x.buyCity; ui.cSell = x.sale.loc === x.buyCity ? C.SAME_CITY : x.sale.loc;
+          ui.cSellMode = ui.esSellMode; ui.cBuyMode = "instant";
+          if (!ui.cQty || Number(ui.cQty) < 1) ui.cQty = 1; saveUi(); selectCraft(x.src);
+          setTimeout(() => { const c = $("c-ench"); c && c.scrollIntoView({ behavior: "smooth", block: "start" }); }, 400); } } },
+        el("div", { class: "row", style: "justify-content:space-between;gap:8px" },
+          el("b", {}, `${gd.name(x.base)} ${t(x.from)} → ${t(x.to)}`),
+          el("b", { class: "pos num" }, `+${S(x.profit)}`)),
+        el("div", { class: "small muted" },
+          `Kauf ${x.buyCity} ${S(x.ip)} + ${S(x.n)} × ${gd.name(x.mat)} à ${S(x.mp)} = ${S(x.cost)}`),
+        el("div", { class: "small" },
+          `Verkauf ${x.sale.loc}${x.sale.mode === "instant" ? " sofort" : " per Auftrag"} ${S(x.sale.price)} · Marge ${C.fmtNum(x.margin)} % · ${volTxt}`),
+      ));
+    }
+  }
+  function esWire() {
+    esDefaults();
+    const chips = (id, values, key, label) => {
+      const box = $(id); box.innerHTML = "";
+      values.forEach((v) => box.append(el("button", { class: "chip" + (ui[key].includes(v) ? " on" : ""),
+        on: { click: () => { const a = ui[key]; const i = a.indexOf(v); if (i >= 0) a.splice(i, 1); else a.push(v); saveUi(); esWire(); esRender(); } } }, label(v))));
+    };
+    chips("es-groups", ES_GROUPS, "esGroups", (v) => v);
+    chips("es-tiers", [4, 5, 6, 7, 8], "esTiers", (v) => "T" + v);
+    chips("es-steps", [0, 1, 2], "esSteps", (v) => `.${v} → .${v + 1} (${ENCH_WORD[v]})`);
+    $("es-route").value = ui.esRoute; $("es-sellmode").value = ui.esSellMode;
+    $("es-vol").value = ui.esVol; $("es-age").value = ui.esAge; $("es-min").value = ui.esMin;
+  }
+
   // ------------------------------------------------------------ Buch-Auswertung
   function renderEval() {
     const ranges = [[7, "7 Tage"], [30, "30 Tage"], [0, "Alles"]];
@@ -2085,6 +2203,9 @@
 
     // Crafting
     let st = null;
+    $("es-run").addEventListener("click", esRun);
+    [["es-route", "esRoute"], ["es-sellmode", "esSellMode"], ["es-vol", "esVol"], ["es-age", "esAge"], ["es-min", "esMin"]].forEach(([id, key]) =>
+      $(id).addEventListener("change", (e) => { ui[key] = e.target.type === "number" ? Number(e.target.value) || 0 : e.target.value; saveUi(); esRender(); }));
     $("c-search").addEventListener("input", () => { clearTimeout(st); st = setTimeout(renderCraftSearch, 150); });
     const cq = $("c-qty");
     let qt = null;
@@ -2175,6 +2296,7 @@
       return;
     }
     render();
+    esWire(); esRender();
     show(ui.view || "silver");
     setStatus(hasPrices() ? "Gespeicherte Preise vorhanden · beim Suchen/Laden werden sie aktualisiert" : "Bereit – Preise werden beim Suchen geladen");
     registerSW();

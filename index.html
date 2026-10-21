@@ -13,7 +13,7 @@
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="icon" type="image/png" href="icons/icon-64.png">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="stylesheet" href="style.css?v=1.7.3">
+<link rel="stylesheet" href="style.css?v=1.7.4">
 </head>
 <body>
 <header class="top">
@@ -460,10 +460,30 @@
   </div>
 </div>
 
+<div class="modal" id="qp">
+  <div class="modal-box">
+    <b id="qp-title" style="font-size:16px"></b>
+    <div class="small muted" id="qp-sub" style="margin:2px 0 10px"></div>
+    <div class="qp-grid">
+      <div class="field"><label>Menge (Stück)</label><input id="qp-qty" type="number" inputmode="numeric" min="0"></div>
+      <div class="qp-x">×</div>
+      <div class="field"><label>Preis pro Stück</label><input id="qp-unit" type="number" inputmode="decimal" min="0" step="any"></div>
+      <div class="qp-x qp-eq">=</div>
+      <div class="field"><label>Gesamt (Silber)</label><input id="qp-total" type="number" inputmode="numeric" min="0"></div>
+    </div>
+    <div class="small muted" id="qp-hint" style="margin-top:6px">Tipp: Menge und Stückpreis eingeben – oder direkt den Gesamtpreis, dann wird der Stückpreis ausgerechnet.</div>
+    <label class="toggle" id="qp-chk-wrap" style="margin-top:8px"><span id="qp-chk-label"></span><input type="checkbox" id="qp-chk"></label>
+    <div class="qp-btns">
+      <button class="btn" id="qp-cancel">Abbrechen</button>
+      <button class="btn" id="qp-live">↺ Live</button>
+      <button class="btn primary" id="qp-save">✔ Speichern</button>
+    </div>
+  </div>
+</div>
 <div class="toast note" id="note"><span id="note-text"></span><button id="note-btn">Ansehen</button></div>
 <div class="toast" id="toast"><span id="toast-text"></span><button id="toast-btn">Neu laden</button></div>
 
-<script src="core.js?v=1.7.3"></script>
-<script src="app.js?v=1.7.3"></script>
+<script src="core.js?v=1.7.4"></script>
+<script src="app.js?v=1.7.4"></script>
 </body>
 </html>

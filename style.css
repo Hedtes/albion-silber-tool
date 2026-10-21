@@ -253,3 +253,18 @@ table.res tr.key td.pos { color: var(--pos); } table.res tr.key td.neg { color: 
 .rank { width: 26px; height: 26px; border-radius: 50%; background: var(--gold); color: #1a1205; font-weight: 800; font-size: 13px; display: flex; align-items: center; justify-content: center; flex: none; margin-top: 2px; }
 
 .plan-note { background: var(--panel2); border: 1px solid var(--line); border-left: 4px solid var(--gold); border-radius: 10px; padding: 8px 10px; margin: 8px 0; font-size: 13px; line-height: 1.45; }
+
+/* ---------- Eingabe Menge × Preis */
+.modal { position: fixed; inset: 0; z-index: 80; background: rgba(0, 0, 0, .55); display: none; align-items: flex-end; justify-content: center; }
+.modal.on { display: flex; }
+.modal-box { background: var(--panel); border: 1px solid var(--line); border-radius: 16px 16px 0 0; padding: 16px 16px calc(16px + var(--safe-b)); width: 100%; max-width: 560px; }
+.qp-grid { display: grid; grid-template-columns: 1fr auto 1fr; gap: 6px 8px; align-items: end; }
+.qp-grid .field:last-child { grid-column: 1 / -1; }
+.qp-grid .qp-eq { display: none; }
+.qp-x { font-weight: 800; color: var(--muted); padding-bottom: 12px; }
+.qp-grid input { width: 100%; font-size: 18px; font-weight: 700; padding: 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel2); color: var(--ink); }
+.qp-grid input.ro { opacity: .7; }
+#qp-total { border-color: var(--gold-dk); color: var(--gold-lt); }
+.qp-btns { display: flex; gap: 8px; margin-top: 12px; }
+.qp-btns .btn { flex: 1; padding: 12px 8px; }
+.qp-btns .btn.primary { flex: 1.4; }

@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const C = window.Core;
-  const VERSION = "1.7.3";
+  const VERSION = "1.7.4";
   const $ = (id) => document.getElementById(id);
   const S = C.fmtSilver;
   const SLOW_DAYS = 7;
@@ -71,6 +71,63 @@
     });
   }
   const qty = () => Math.max(0, Math.floor(Number(ui.qty) || 0));
+
+  // ------------------------------------------------------------ Eingabe: Menge × Stückpreis = Gesamt
+  let qpCfg = null;
+  const qpNum = (v) => { const n = Number(String(v).replace(/\s/g, "").replace(",", ".")); return isFinite(n) ? n : NaN; };
+  function qpCalc(from) {
+    const q = qpNum($("qp-qty").value), u = qpNum($("qp-unit").value), t = qpNum($("qp-total").value);
+    if (from === "total") { if (q > 0 && t >= 0) $("qp-unit").value = Math.round(t / q * 100) / 100; }
+    else if (q >= 0 && u >= 0) $("qp-total").value = Math.round(q * u);
+  }
+  /** cfg: {title, sub, qty, qtyEdit, unit, live, check:{label, value}, onSave({qty,unit,total,check}), onLive} */
+  function qpOpen(cfg) {
+    qpCfg = cfg;
+    $("qp-title").textContent = cfg.title || "";
+    $("qp-sub").textContent = cfg.sub || "";
+    $("qp-qty").value = cfg.qty === null || cfg.qty === undefined ? "" : Math.round(cfg.qty);
+    $("qp-qty").readOnly = !cfg.qtyEdit;
+    $("qp-qty").classList.toggle("ro", !cfg.qtyEdit);
+    $("qp-unit").value = cfg.unit === null || cfg.unit === undefined ? "" : Math.round(cfg.unit * 100) / 100;
+    $("qp-total").value = "";
+    qpCalc("unit");
+    $("qp-live").style.display = cfg.onLive ? "" : "none";
+    $("qp-live").textContent = cfg.liveLabel || "↺ Live";
+    $("qp-chk-wrap").style.display = cfg.check ? "" : "none";
+    if (cfg.check) { $("qp-chk-label").textContent = cfg.check.label; $("qp-chk").checked = !!cfg.check.value; }
+    $("qp-save").textContent = cfg.saveLabel || "✔ Speichern";
+    $("qp").classList.add("on");
+    setTimeout(() => { const f = cfg.qtyEdit && cfg.focusQty ? $("qp-qty") : $("qp-unit"); f.focus(); f.select && f.select(); }, 60);
+  }
+  function qpClose() { $("qp").classList.remove("on"); qpCfg = null; }
+  function qpWire() {
+    $("qp-qty").addEventListener("input", () => qpCalc("unit"));
+    $("qp-unit").addEventListener("input", () => qpCalc("unit"));
+    $("qp-total").addEventListener("input", () => qpCalc("total"));
+    $("qp-cancel").addEventListener("click", qpClose);
+    $("qp").addEventListener("click", (e) => { if (e.target === $("qp")) qpClose(); });
+    $("qp-live").addEventListener("click", () => { const c = qpCfg; qpClose(); if (c && c.onLive) c.onLive(); });
+    $("qp-save").addEventListener("click", () => {
+      const c = qpCfg; if (!c) return;
+      const qty = qpNum($("qp-qty").value), unit = qpNum($("qp-unit").value), total = qpNum($("qp-total").value);
+      if ($("qp-unit").value.trim() === "" && $("qp-total").value.trim() === "") { if (c.onLive) { qpClose(); c.onLive(); } return; }
+      if (!(unit >= 0) || (c.qtyEdit && !(qty >= 0))) { alert("Bitte Zahlen eingeben."); return; }
+      qpClose();
+      c.onSave({ qty: Math.round(qty || 0), unit, total: Math.round(total || 0), check: $("qp-chk").checked });
+    });
+    document.addEventListener("keydown", (e) => { if (e.key === "Enter" && qpCfg) $("qp-save").click(); });
+  }
+  /** Marktpreis ändern – mit Menge, damit man sofort den Gesamtpreis sieht. */
+  function priceEdit(item, loc, kind, qty, after, current) {
+    const [cur] = store.get(item, loc, kind);
+    const e = store.live[item + "|" + loc] || {};
+    const liveTxt = e[kind] ? `Live: ${S(e[kind])} (${C.fmtAge(e[kind + "_ts"])} alt)` : "kein Live-Preis";
+    const what = kind === "buy" ? "Kaufgebot" : "Verkaufsangebot";
+    qpOpen({ title: gd.label(item), sub: `${loc} · ${what} · ${liveTxt}`, qty: qty || 1, qtyEdit: false,
+      unit: current !== undefined && current !== null ? current : cur,
+      onSave: ({ unit }) => { store.setManual(item, loc, kind, Math.round(unit)); after(); },
+      onLive: () => { store.setManual(item, loc, kind, null); after(); }, liveLabel: "↺ Live-Preis" });
+  }
 
   // ------------------------------------------------------------ Preise laden
   async function runJobs(jobs, done) {
@@ -335,17 +392,9 @@
   function editPrice(key) {
     const r = calcRow(); if (!r) return;
     const [item, loc, kind] = priceKeys(r)[key];
-    const [cur] = store.get(item, loc, kind);
-    const e = store.live[item + "|" + loc] || {};
-    const liveTxt = e[kind] ? `Live: ${S(e[kind])} (${C.fmtAge(e[kind + "_ts"])} alt)` : "Live: keiner";
-    const v = window.prompt(`${gd.label(item)} – ${loc}\n${kind === "buy" ? "Kaufgebot" : "Verkaufsangebot"} · ${liveTxt}\n\nPreis in Silber (leer = Live-Preis):`,
-      cur === null ? "" : String(Math.round(cur)));
-    if (v === null) return;
-    const clean = v.replace(/[.\s]/g, "");
-    if (clean === "") store.setManual(item, loc, kind, null);
-    else if (/^\d+$/.test(clean)) store.setManual(item, loc, kind, Number(clean));
-    else { alert("Bitte eine ganze Zahl eingeben."); return; }
-    render();
+    const n = calcAmount(r, ui.focus);
+    const nd = C.needs(r, n, ui.focus);
+    priceEdit(item, loc, kind, key === "raw" ? nd.raw : key === "prev" ? nd.prev : n, () => render());
   }
 
   function resetPrices(keys) {
@@ -701,20 +750,10 @@
     runJobs([[items, [o.buyCity]], [variants, o.sellLocs], [variants, o.sellLocs, "history"], [items, [o.buyCity], "history"]], () => render());
   }
 
-  function aEditPrice(item, loc, kind, current, after) {
-    const [cur] = store.get(item, loc, kind);
-    const e = store.live[item + "|" + loc] || {};
-    const liveTxt = e[kind] ? `Live: ${S(e[kind])} (${C.fmtAge(e[kind + "_ts"])} alt)` : "Live: keiner";
-    const what = kind === "buy" ? "Kaufgebot (Sofortverkauf)" : "Verkaufsangebot";
-    const start = current !== undefined && current !== null ? current : cur;
-    const v = window.prompt(`${gd.label(item)} – ${loc}\n${what} · ${liveTxt}\n\nPreis in Silber (leer = Live-Preis):`, start === null ? "" : String(Math.round(start)));
-    if (v === null) return;
-    const clean = v.replace(/[.\s]/g, "");
-    if (clean === "") store.setManual(item, loc, kind, null);
-    else if (/^\d+$/.test(clean)) store.setManual(item, loc, kind, Number(clean));
-    else return;
-    (after || renderAlch)();
+  function aEditPrice(item, loc, kind, current, after, qty) {
+    priceEdit(item, loc, kind, qty, () => (after || renderAlch)(), current);
   }
+
 
   function renderAlchQuick() {
     const box = $("a-quick");
@@ -759,7 +798,7 @@
       el("button", { class: "icon-btn", title: "Preis ändern", on: { click: () => {
         // bei „bester Markt“ den Markt festhalten, damit der eigene Preis auch dort gilt
         if (ui.aSell === C.AUTO_MARKET) { ui.aSell = loc; saveUi(); }
-        aEditPrice(id, loc, kind, p);
+        aEditPrice(id, loc, kind, p, null, plan.pieces);
       } } }, "✎"),
       el("button", { class: "icon-btn", title: "Live-Preis", on: { click: () => aResetPrice(id, loc, kind) } }, "↺"),
     ));
@@ -893,7 +932,7 @@
         el("div", { class: "row", style: "justify-content:space-between;flex-wrap:nowrap;align-items:flex-start" },
           el("b", { style: "flex:1;min-width:0" }, `${S(x.qty)} × ${gd.label(x.id)}`),
           el("div", { class: "row", style: "flex-wrap:nowrap;gap:6px" },
-            el("button", { class: "icon-btn", title: "Marktpreis eingeben", on: { click: () => aEditPrice(x.id, o.buyCity, o.buyMode === "instant" ? "sell" : "buy") } }, "✎"),
+            el("button", { class: "icon-btn", title: "Marktpreis eingeben", on: { click: () => aEditPrice(x.id, o.buyCity, o.buyMode === "instant" ? "sell" : "buy", null, null, x.qty) } }, "✎"),
             el("button", { class: "icon-btn", title: "Live-Preis", on: { click: () => aResetPrice(x.id, o.buyCity, o.buyMode === "instant" ? "sell" : "buy") } }, "↺"))),
         el("div", { class: "small " + (n.how === "craft" ? "gold" : "") }, how + (m && n.how === "craft" ? ` (Markt: ${S(m)})` : "")),
         save > 0 ? el("div", { class: "save" }, `Spart ${S(save)} Silber gegenüber Kaufen`) : null,
@@ -916,7 +955,7 @@
           trend(it.item, o.buyCity, it.price, "buy")),
         el("div", { class: "num", style: "font-weight:700" }, S(it.cost)),
         el("div", { class: "row", style: "gap:6px;flex-wrap:nowrap;width:100%;justify-content:flex-end" },
-          el("button", { class: "icon-btn", title: "Preis", on: { click: () => aEditPrice(it.item, o.buyCity, bkind) } }, "✎"),
+          el("button", { class: "icon-btn", title: "Preis", on: { click: () => aEditPrice(it.item, o.buyCity, bkind, null, null, it.buy || it.qty) } }, "✎"),
           el("button", { class: "icon-btn", title: "Live-Preis", on: { click: () => aResetPrice(it.item, o.buyCity, bkind) } }, "↺"),
           el("button", { class: "icon-btn", title: "Lager", on: { click: () => editStock(it.item) } }, "📦"),
           it.buy > 0 ? el("button", { class: "icon-btn", title: "Als Kaufauftrag", on: { click: () => openOrder({ side: "buy", id: it.item, qty: it.buy, price: bp ? bp + 1 : it.price, loc: o.buyCity }) } }, "📑") : null)));
@@ -1033,17 +1072,8 @@
   function editCraftPrice(which) {
     const k = craftCalc(); if (!k) return;
     const [item, loc, kind] = cPriceKey(which, k);
-    const [cur] = store.get(item, loc, kind);
-    const e = store.live[item + "|" + loc] || {};
-    const liveTxt = e[kind] ? `Live: ${S(e[kind])} (${C.fmtAge(e[kind + "_ts"])} alt)` : "Live: keiner";
-    const v = window.prompt(`${gd.label(item)} – ${loc}\n${kind === "buy" ? "Kaufgebot" : "Verkaufsangebot"} · ${liveTxt}\n\nPreis in Silber (leer = Live-Preis):`,
-      cur === null ? "" : String(Math.round(cur)));
-    if (v === null) return;
-    const clean = v.replace(/[.\s]/g, "");
-    if (clean === "") store.setManual(item, loc, kind, null);
-    else if (/^\d+$/.test(clean)) store.setManual(item, loc, kind, Number(clean));
-    else { alert("Bitte eine ganze Zahl eingeben."); return; }
-    renderCraft();
+    const pl = k.plan.find((x) => x.id === which);
+    priceEdit(item, loc, kind, which === "prod" ? k.crafts * k.rec.amount : (pl ? pl.buyNet || pl.buy : 1), renderCraft);
   }
 
   function resetCraftPrices(list) {
@@ -1243,6 +1273,17 @@
     note(`📝 Gespeichert (Nr. ${projects.length}): ${S(p.pieces)} × ${gd.label(p.id)}`);
     renderShop();
   }
+  function editMat(m) {
+    const unit = m.paid !== null && m.paid !== undefined && m.buy ? m.paid / m.buy : m.unit;
+    qpOpen({ title: gd.label(m.item), sub: `${m.city} · geplant ${S(m.buy)} Stück${m.unit !== null ? " à ca. " + S(m.unit) : ""}`,
+      qty: m.buy, qtyEdit: true, unit, check: { label: "✔ Schon gekauft", value: true },
+      onSave: ({ qty, unit, total, check }) => {
+        m.buy = qty;
+        if (check) { m.done = true; m.paid = total; }
+        else { m.done = false; m.paid = null; m.unit = unit; m.cost = total; }
+        saveProjects(); renderShop();
+      } });
+  }
   const matCost = (m) => m.paid !== null && m.paid !== undefined ? m.paid : m.cost;
   const toBuy = (p) => p.mats.filter((m) => m.buy > 0);
 
@@ -1312,15 +1353,11 @@
       card.append(el("div", { class: "chk" + (m.done ? " done" : "") },
         el("label", {}, cb, el("div", { class: "t" },
           el("div", { class: "n" }, `${S(m.buy)} × ${gd.label(m.item)}`),
-          el("div", { class: "small muted" }, `${m.city} · ${m.unit === null ? "Preis fehlt" : "ca. " + S(m.unit) + " pro Stück"}` +
+          el("div", { class: "small muted" }, `${m.city} · ${m.paid !== null && m.paid !== undefined && m.buy ? S(m.paid / m.buy) + " pro Stück (bezahlt)" : m.unit === null ? "Preis fehlt" : "ca. " + S(m.unit) + " pro Stück"}` +
             (m.have ? ` · dazu ${S(m.have)} aus dem Lager` : "")),
           m.done ? el("div", { class: "small tag" }, m.paid !== null ? `✔ gekauft für ${S(m.paid)}` : "✔ gekauft") : null)),
         el("div", { class: "num", style: "font-weight:700;text-align:right" }, matCost(m) === null ? "–" : S(matCost(m))),
-        el("button", { class: "icon-btn", title: "Bezahlten Preis eintragen", on: { click: () => {
-          const v = askSilver(`${S(m.buy)} × ${gd.label(m.item)}\n\nWas hast du insgesamt bezahlt? (Silber)`, matCost(m));
-          if (v === null) return;
-          m.paid = v; m.done = true; saveProjects(); renderShop();
-        } } }, "✎")));
+        el("button", { class: "icon-btn", title: "Menge / Preis ändern", on: { click: () => editMat(m) } }, "✎")));
     }
     // 2 · Zwischenprodukte
     if (p.steps.length) {
@@ -1337,7 +1374,7 @@
     card.append(el("div", { class: "proj-sec" }, `${p.steps.length ? 3 : 2} · Craften & verkaufen`),
       el("div", { class: "proj-sum" },
         el("div", {}, el("b", {}, `${S(p.crafts)} Crafts → ${S(p.pieces)} × ${gd.label(p.id)}`), ` in ${p.city}`),
-        el("div", { class: "small" }, `Einkauf geplant ${S(p.cost)} · schon ausgegeben ${S(spent)}`),
+        el("div", { class: "small" }, `Einkauf gesamt ${S(buys.reduce((a, m) => a + (matCost(m) || 0), 0))} · schon ausgegeben ${S(spent)}`),
         el("div", { class: "small" }, `Verkauf geplant: ${p.sellLoc}${p.price ? " · ca. " + S(p.price) + " pro Stück" : ""}`),
         el("div", { class: "small muted" }, "Am Ende bleibt die Rückgabe der letzten Runde übrig (unter 1 Craft) – ab ins 📦 Lager."),
         p.profit !== null ? el("div", { class: "small" }, "Erwarteter Gewinn: ",
@@ -1665,14 +1702,12 @@
   const saveStock = () => storage.set("stock", stock);
   function editStock(item) {
     const cur = stock[item] || { qty: 0, value: 0 };
-    const q = window.prompt(`📦 ${gd.label(item)}\nWie viele hast du im Lager? (0 = entfernen)`, String(cur.qty || ""));
-    if (q === null) return;
-    const qty = Math.max(0, Math.floor(Number(q.replace(/[.\s]/g, "")) || 0));
-    if (!qty) { delete stock[item]; saveStock(); refreshAll(); return; }
-    const v = window.prompt(`Wert pro Stück für die Rechnung\n0 = selbst gesammelt/gratis, sonst z. B. dein Einkaufspreis`, String(cur.value || 0));
-    if (v === null) return;
-    stock[item] = { qty, value: Math.max(0, Number(v.replace(/[.\s]/g, "").replace(",", ".")) || 0) };
-    saveStock(); refreshAll();
+    qpOpen({ title: "📦 " + gd.label(item), sub: "Lager: Menge und Wert pro Stück (0 = selbst gesammelt/gratis). Menge 0 = entfernen.",
+      qty: cur.qty || "", qtyEdit: true, focusQty: true, unit: cur.value || 0,
+      onSave: ({ qty, unit }) => {
+        if (!qty) delete stock[item]; else stock[item] = { qty, value: Math.max(0, unit || 0) };
+        saveStock(); refreshAll();
+      } });
   }
   /** Lager nach dem Craften abziehen. used: {item: qty} */
   function consumeStock(used) {
@@ -1776,11 +1811,11 @@
       el("div", { class: "price" },
         el("div", { class: "t" }, el("div", { class: "n" }, "Volles Journal verkaufen"), el("div", { class: "small muted" }, `${k.city} · ${j.sf || "fehlt"}`)),
         el("div", { class: "v num" }, S(j.pf)),
-        el("button", { class: "icon-btn", on: { click: () => aEditPrice(j.full, k.city, "buy", j.pf, renderCraft) } }, "✎")),
+        el("button", { class: "icon-btn", on: { click: () => aEditPrice(j.full, k.city, "buy", j.pf, renderCraft, Math.max(1, Math.round(j.journalsFilled))) } }, "✎")),
       el("div", { class: "price" },
         el("div", { class: "t" }, el("div", { class: "n" }, "Leeres Journal kaufen"), el("div", { class: "small muted" }, `${k.city} · ${j.se || "fehlt"}`)),
         el("div", { class: "v num" }, S(j.pe)),
-        el("button", { class: "icon-btn", on: { click: () => aEditPrice(j.empty, k.city, "sell", j.pe, renderCraft) } }, "✎")),
+        el("button", { class: "icon-btn", on: { click: () => aEditPrice(j.empty, k.city, "sell", j.pe, renderCraft, Math.max(1, Math.ceil(j.journalsFilled))) } }, "✎")),
       el("div", { class: "small", style: "margin-top:6px" }, !j.fame ? "Trag den Ruhm pro Craft ein, dann rechnet das Tool die Journale aus." :
         j.per === null ? "Journal-Preise fehlen – „Live-Preise laden“." :
         `${C.fmtNum(j.journalsFilled, 2)} Journale gefüllt × ${S(j.per)} = `,
@@ -1858,7 +1893,7 @@
         segBtn("craft", `⚒ Selbst gecraftet · ${S(e.own)}`), segBtn("buy", `🛒 Gekauft · ${S(e.bought.p)}`)),
       el("div", { class: "row", style: "justify-content:space-between;gap:8px" },
         el("div", { class: "small muted" }, `Einkauf in ${k.buy}${e.src === "buy" ? "" : " · Craftkosten aus dem Rechner oben"}`),
-        e.src === "buy" ? el("button", { class: "icon-btn", on: { click: () => aEditPrice(ui.cItem, k.buy, e.kind, null, renderCraft) } }, "✎") : null),
+        e.src === "buy" ? el("button", { class: "icon-btn", on: { click: () => aEditPrice(ui.cItem, k.buy, e.kind, null, renderCraft, e.pieces) } }, "✎") : null),
     );
     // Material-Preise
     for (const m of e.mats) box.append(el("div", { class: "price" },
@@ -1867,7 +1902,7 @@
           el("span", { class: "src " + (m.src || "fehlt") }, `${m.src || "fehlt"}${m.ts ? " · " + C.fmtAge(m.ts) : ""}`)),
         trend(m.id, k.buy, m.p, "buy")),
       el("div", { style: "text-align:right" }, el("div", { class: "small muted" }, "Stückpreis"), el("div", { class: "v num" }, S(m.p))),
-      el("button", { class: "icon-btn", on: { click: () => aEditPrice(m.id, k.buy, e.kind, null, renderCraft) } }, "✎")));
+      el("button", { class: "icon-btn", on: { click: () => aEditPrice(m.id, k.buy, e.kind, null, renderCraft, m.n * e.pieces) } }, "✎")));
     box.append(el("div", { class: "field", style: "margin-top:8px" }, el("label", {}, "Gebühr pro Stück und Stufe (falls die Schmiede etwas kostet)"), feeInp));
 
     // Ergebnis je Zielstufe
@@ -1889,7 +1924,7 @@
             el("div", { class: "small muted" }, `${loc}${mode === "instant" ? " · Sofortverkauf" : ""} · Verkäufe/Tag ${st.best && st.best.info && st.best.info.per_day != null ? C.fmtNum(st.best.info.per_day, st.best.info.per_day < 10 ? 1 : 0) : "?"}`),
             trend(st.tid, loc, st.best ? st.best.price : null, "sell")),
           el("div", { class: "v num" }, S(st.best ? st.best.price : null)),
-          el("button", { class: "icon-btn", on: { click: () => aEditPrice(st.tid, loc, mode === "instant" ? "buy" : "sell", null, renderCraft) } }, "✎")),
+          el("button", { class: "icon-btn", on: { click: () => aEditPrice(st.tid, loc, mode === "instant" ? "buy" : "sell", null, renderCraft, e.pieces) } }, "✎")),
       );
       const tbl = el("table", { class: "res num" });
       [
@@ -2504,7 +2539,7 @@
 
   // ------------------------------------------------------------ Start
   async function start() {
-    wire();
+    wire(); qpWire();
     try {
       const [res, al, jr, en] = await Promise.all([fetch("data/recipes_all.json"), fetch("data/alchemy.json"), fetch("data/journals.json"), fetch("data/enchant.json")]);
       gd = new C.GameData(await res.json());

@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const C = window.Core;
-  const VERSION = "1.7.0";
+  const VERSION = "1.7.1";
   const $ = (id) => document.getElementById(id);
   const S = C.fmtSilver;
   const SLOW_DAYS = 7;
@@ -2372,7 +2372,15 @@
       const ask = (w) => {
         $("toast-text").textContent = "Neue Version verfügbar";
         $("toast").classList.add("on");
-        $("toast-btn").onclick = () => w.postMessage("skip");
+        $("toast-btn").onclick = () => {
+          $("toast-text").textContent = "Lädt neu …";
+          try { w.postMessage("skip"); } catch (e) { /* egal */ }
+          // Falls der neue Service Worker nicht übernimmt: abmelden und frisch laden
+          setTimeout(async () => {
+            try { const regs = await navigator.serviceWorker.getRegistrations(); await Promise.all(regs.map((r) => r.unregister())); } catch (e) { /* egal */ }
+            location.reload();
+          }, 2500);
+        };
       };
       if (reg.waiting && navigator.serviceWorker.controller) ask(reg.waiting);
       reg.addEventListener("updatefound", () => {

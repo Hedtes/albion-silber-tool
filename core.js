@@ -535,6 +535,117 @@
     };
   }
 
+  // ------------------------------------------------------------ Silber-Finder
+  /**
+   * Bewertet einen Craft/Refine in einer Stadt.
+   * o: {city, buyCity, buyMode, sellLocs, sellMode, focus, daily, chain, maxAge, fce, memo}
+   * -> null, wenn Preise fehlen. Preise gelten pro Craft.
+   */
+  function evalCraft(gd, store, s, id, o) {
+    const rec = gd.recipes[id];
+    if (!rec) return null;
+    const kind = o.buyMode === "instant" ? "sell" : "buy";
+    const memo = o.memo || (o.memo = {});
+    const market = (item) => {
+      const key = "m|" + item + "|" + o.buyCity + "|" + kind;
+      if (key in memo) return memo[key];
+      const [p, src] = store.get(item, o.buyCity, kind, o.maxAge);
+      return (memo[key] = p && (src !== "alt") ? buyUnitCost(s, p, o.buyMode) : null);
+    };
+    // Selbstkosten, wenn man eine Zutat selbst refined (nur Refining, ohne Fokus = vorsichtig)
+    const own = (item, depth) => {
+      const key = "o|" + item + "|" + o.city + "|" + o.buyCity + "|" + kind + "|" + (o.daily || 0);
+      if (key in memo) return memo[key];
+      memo[key] = null;
+      const r = gd.recipes[item];
+      if (!r || !REFINING_CATS.has(r.cat) || depth > 8) return null;
+      const rr = returnRate(productionBonus(s, o.city, r.cat, false, o.daily));
+      let t = 0;
+      for (const [rid, cnt, ret] of r.res) {
+        const u = unit(rid, depth + 1);
+        if (u === null) return null;
+        t += u.price * cnt * (ret ? 1 - rr : 1);
+      }
+      return (memo[key] = t / r.amount);
+    };
+    const unit = (item, depth) => {
+      const mp = market(item);
+      if (o.chain && gd.recipes[item] && REFINING_CATS.has(gd.recipes[item].cat)) {
+        const oc = own(item, depth || 0);
+        if (oc !== null && (mp === null || oc < mp)) return { price: oc, self: true };
+      }
+      return mp === null ? null : { price: mp, self: false };
+    };
+    const prices = {}, selfMade = [];
+    for (const [rid] of rec.res) {
+      const u = unit(rid, 0);
+      if (u === null) return null;
+      prices[rid] = u.price;
+      if (u.self) selfMade.push(rid);
+    }
+    const best = bestSale(store, s, id, o.sellLocs, o.sellMode, o.maxAge);
+    if (!best) return null;
+    const rrr = returnRate(productionBonus(s, o.city, rec.cat, o.focus, o.daily));
+    const res = calcCraft(rec, 1, rrr, prices, best.price, sellFee(s, best.mode));
+    return {
+      id, rec, city: o.city, buyCity: o.buyCity, buyMode: o.buyMode, focus: !!o.focus, rrr, prices, selfMade,
+      sellLoc: best.loc, sellMode: best.mode, sellPrice: best.price, per_day: best.info.per_day,
+      profit: res.profit, cost: res.cost, margin: res.margin, revenue: res.revenue,
+      focusCost: o.focus ? focusCost(rec.focus, o.fce) : 0,
+    };
+  }
+
+  /** Einkaufskosten (Silber, das man vorab braucht) für n Crafts. */
+  function upfrontCost(ev, n) {
+    let t = 0;
+    for (const [rid, cnt, ret] of ev.rec.res) t += buyAmount(cnt, n, ev.rrr, !!ret)[0] * ev.prices[rid];
+    return t;
+  }
+
+  /**
+   * Verteilt Budget und Fokus auf die besten Gelegenheiten.
+   * items: [{nf: ev|null, f: ev|null}] – pro Item die beste Variante ohne/mit Fokus.
+   * cap: max. Stück pro Item (z. B. Verkäufe/Tag × Tage).
+   */
+  function planSilver(items, opt) {
+    let budget = opt.budget > 0 ? opt.budget : Infinity;
+    let focusLeft = opt.focus || 0;
+    const plan = [];
+    const usedCrafts = {};
+    const capCrafts = (ev) => {
+      const pieces = ev.per_day === null || ev.per_day === undefined
+        ? (opt.unknownCap || 0) : Math.floor(ev.per_day * opt.days);
+      return Math.min(opt.maxCrafts || 1e9, Math.floor(pieces / ev.rec.amount)) - (usedCrafts[ev.id] || 0);
+    };
+    const take = (ev) => {
+      let n = capCrafts(ev);
+      if (ev.focus && ev.focusCost > 0) n = Math.min(n, Math.floor(focusLeft / ev.focusCost));
+      const per = Math.max(1e-9, ev.cost);
+      if (budget !== Infinity) n = Math.min(n, Math.floor(budget / per));
+      while (n > 0 && budget !== Infinity && upfrontCost(ev, n) > budget) n = Math.floor(n * 0.97);
+      if (n <= 0) return false;
+      const cost = upfrontCost(ev, n);
+      budget -= cost;
+      if (ev.focus) focusLeft -= n * ev.focusCost;
+      plan.push({ ev, crafts: n, pieces: n * ev.rec.amount, cost, profit: n * ev.profit, focus: ev.focus ? n * ev.focusCost : 0 });
+      usedCrafts[ev.id] = (usedCrafts[ev.id] || 0) + n;
+      return true;
+    };
+    // 1) Fokus dorthin, wo er am meisten zusätzliches Silber bringt
+    if (focusLeft > 0) {
+      const fc = items.filter((x) => x.f && x.f.profit > 0 && x.f.focusCost > 0)
+        .map((x) => ({ x, gain: (x.f.profit - Math.max(0, x.nf ? x.nf.profit : 0)) / x.f.focusCost }))
+        .filter((y) => y.gain > 0).sort((a, b) => b.gain - a.gain);
+      for (const { x } of fc) { if (focusLeft < x.f.focusCost) continue; take(x.f); }
+    }
+    // 2) Rest ohne Fokus nach Rendite (Gewinn je eingesetztem Silber)
+    const nc = items.filter((x) => x.nf && x.nf.profit > 0)
+      .sort((a, b) => b.nf.profit / Math.max(1, b.nf.cost) - a.nf.profit / Math.max(1, a.nf.cost));
+    for (const x of nc) { if (budget <= 0) break; take(x.nf); }
+    plan.sort((a, b) => b.profit - a.profit);
+    return { plan, budgetLeft: budget, focusLeft };
+  }
+
   const Core = {
     API_HOST, ROYAL_CITIES, CITIES, BLACK_MARKET, MARKETS, AUTO_CITY, AUTO_MARKET, SAME_CITY,
     REFINING_CATS, REFINE_TYPES, DEFAULT_SETTINGS,
@@ -542,6 +653,7 @@
     GameData, PriceStore, bonusCityFor, productionBonus, returnRate, focusCost,
     salesTax, sellFee, buyUnitCost, salePrice, bestSale, volumeOk, calcCraft,
     refineTable, needs, refineAmount, refineDetail, simulate, buyAmount, buyPlan, craftsFor,
+    evalCraft, upfrontCost, planSilver,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = Core;
   else root.Core = Core;

@@ -23,6 +23,53 @@
 </header>
 
 <main>
+  <!-- ===================================================== Silber-Finder -->
+  <section class="view" id="view-silver">
+    <div class="seg" id="s-mode" style="margin-bottom:8px">
+      <button data-m="safe">🛡 100 % sicher</button>
+      <button data-m="bm">🐎 mit Black Market</button>
+    </div>
+    <div class="muted small" id="s-mode-info" style="margin:0 2px 10px"></div>
+
+    <div class="card qty">
+      <label class="t" for="s-budget">DEIN BUDGET · Silber</label>
+      <input class="big num" id="s-budget" type="number" inputmode="numeric" min="0" step="100000" value="1000000">
+      <div class="quick" id="s-quick"></div>
+      <div class="grid" style="margin-top:10px">
+        <div class="field"><label style="color:var(--gold-lt)">Fokus verfügbar</label><input id="s-focus" type="number" inputmode="numeric" value="0"></div>
+        <div class="field"><label style="color:var(--gold-lt)">Fokus-Effizienz (FCE)</label><input id="s-fce" type="number" inputmode="numeric" value="0"></div>
+      </div>
+      <button class="btn primary block" id="s-run" style="margin-top:12px">🔍  Silber finden</button>
+      <div class="progress"><div></div></div>
+      <div class="status"></div>
+    </div>
+
+    <div class="card">
+      <details class="opts">
+        <summary>Was durchsuchen? <span class="muted small" id="s-opts-sum"></span></summary>
+        <div class="grid">
+          <div class="field full"><label>Gruppen</label><div class="mini-chips" id="s-groups"></div></div>
+          <div class="field full"><label>Tiers</label><div class="mini-chips" id="s-tiers"></div></div>
+          <div class="field full"><label>Verzauberung</label><div class="mini-chips" id="s-enchs"></div></div>
+          <div class="field"><label>Stadt</label><select id="s-city"></select></div>
+          <div class="field"><label>Material kaufen per</label><select id="s-buymode">
+            <option value="instant">Sofortkauf (sofort)</option><option value="order">Kaufauftrag (günstiger, dauert)</option></select></div>
+          <div class="field"><label>Mindest-Marge %</label><input id="s-margin" type="number" inputmode="decimal" value="10"></div>
+          <div class="field"><label>Menge = Verkäufe von … Tagen</label><input id="s-days" type="number" inputmode="decimal" value="1"></div>
+          <div class="field"><label>Max. Preisalter (Stunden)</label><input id="s-age" type="number" inputmode="decimal" value="6"></div>
+          <div class="full"><label class="toggle"><span>Ganze Kette: Barren/Planken selbst refinen, wenn günstiger <span class="muted small">(★)</span></span><input type="checkbox" id="s-chain"></label></div>
+        </div>
+      </details>
+    </div>
+
+    <div class="tiles" id="s-tiles"></div>
+    <div class="muted small" id="s-info" style="margin:0 2px 8px"></div>
+    <div class="list" id="s-plan"></div>
+    <button class="btn primary block" id="s-shop" style="margin-top:12px;display:none">🛒 Ganzen Plan zur Einkaufsliste</button>
+    <h3 id="s-more-h" style="display:none;margin:20px 2px 8px;font-size:15px">Weitere Gelegenheiten</h3>
+    <div class="list" id="s-more"></div>
+  </section>
+
   <!-- ===================================================== Refining -->
   <section class="view active" id="view-refine">
     <div class="chips" id="res-chips"></div>
@@ -173,10 +220,11 @@
 </main>
 
 <nav class="tabs">
+  <button data-view="silver"><span class="ic">💰</span>Silber</button>
   <button data-view="refine" class="on"><span class="ic">⛏</span>Refining</button>
   <button data-view="craft"><span class="ic">⚒</span>Crafting</button>
   <button data-view="shop"><span class="ic">🛒</span>Einkauf</button>
-  <button data-view="settings"><span class="ic">⚙</span>Einstellungen</button>
+  <button data-view="settings"><span class="ic">⚙</span>Optionen</button>
 </nav>
 
 <!-- ===================================================== Refining-Rechner -->

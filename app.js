@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const C = window.Core;
-  const VERSION = "1.1.0";
+  const VERSION = "1.2.0";
   const $ = (id) => document.getElementById(id);
   const S = C.fmtSilver;
   const SLOW_DAYS = 7;
@@ -25,9 +25,11 @@
   const ui = Object.assign({
     mode: "cat", cat: "ore", qty: 1000, city: C.AUTO_CITY, buy: C.SAME_CITY, sell: C.AUTO_MARKET,
     sellMode: "order", buyMode: "instant", daily: 0, fce: 0, minVol: 1, tiers: [4, 5, 6, 7, 8], enchs: [0, 1, 2, 3, 4],
-    sort: "qty", focus: false, chain: false, view: "refine",
+    sort: "qty", focus: false, chain: false, view: "silver",
     cItem: null, cGroup: "Tränke", cQty: 100, cCity: C.AUTO_CITY, cBuy: C.SAME_CITY, cBuyMode: "instant",
     cSell: C.AUTO_MARKET, cSellMode: "order", cFocus: false, cDaily: 0, cStation: 0,
+    sMode: "safe", sBudget: 1000000, sFocus: 0, sFce: 0, sCity: "auto", sBuyMode: "instant", sChain: true,
+    sMargin: 10, sDays: 1, sAge: 6, sGroups: ["Refining", "Tränke", "Essen"], sTiers: [4, 5, 6], sEnchs: [0, 1, 2],
   }, storage.get("ui", {}));
   const saveUi = () => storage.set("ui", ui);
   let shop = storage.get("shop", []);
@@ -72,7 +74,7 @@
   async function runJobs(jobs, done) {
     if (busy) { setStatus("Es läuft bereits ein Abruf …"); return; }
     busy = true; abort = new AbortController();
-    $("load-btn").disabled = true; $("shop-reload").disabled = true; $("c-load").disabled = true;
+    $("load-btn").disabled = true; $("shop-reload").disabled = true; $("c-load").disabled = true; $("s-run").disabled = true;
     let errors = 0;
     try {
       for (let k = 0; k < jobs.length; k++) {
@@ -93,7 +95,7 @@
       setStatus("Fehler beim Abruf: " + (e.message || e), true);
     } finally {
       busy = false; progress(0, 0);
-      $("load-btn").disabled = false; $("shop-reload").disabled = false; $("c-load").disabled = false;
+      $("load-btn").disabled = false; $("shop-reload").disabled = false; $("c-load").disabled = false; $("s-run").disabled = false;
       if (done) await done();
     }
   }
@@ -426,6 +428,196 @@
     }
   }
 
+  // ------------------------------------------------------------ Silber-Finder
+  const S_GROUPS = ["Refining", "Tränke", "Essen", "Waffen", "Rüstung", "Nebenhand", "Taschen & Umhänge", "Sammlerausrüstung", "Werkzeuge"];
+  let silver = null; // letztes Ergebnis
+
+  function sCities() {
+    const pool = ui.sMode === "bm" ? C.ROYAL_CITIES.concat(["Caerleon"]) : C.ROYAL_CITIES;
+    return ui.sCity === "auto" ? pool : [ui.sCity];
+  }
+  function sIds() {
+    return Object.keys(gd.recipes).filter((id) => {
+      const r = gd.recipes[id];
+      return ui.sGroups.includes(r.group) && ui.sTiers.includes(r.tier) && ui.sEnchs.includes(r.ench);
+    });
+  }
+  function sOpts() {
+    return { maxAge: Number(ui.sAge) || 6, daily: 0, fce: Number(ui.sFce) || 0, chain: ui.sChain, buyMode: ui.sBuyMode, sellMode: "instant" };
+  }
+
+  /** Alle Items bewerten: pro Item beste Stadt ohne und mit Fokus. */
+  function silverEvaluate(ids) {
+    const o = sOpts();
+    const minM = Number(ui.sMargin) || 0;
+    const withFocus = (Number(ui.sFocus) || 0) > 0;
+    const items = [];
+    const memos = {};
+    for (const id of ids) {
+      let bestNf = null, bestF = null;
+      for (const city of sCities()) {
+        const memo = (memos[city] = memos[city] || {});
+        // Der Black Market kauft nur Ausrüstung – Ressourcen, Tränke und Essen bleiben in der Stadt
+        const bmOk = ui.sMode === "bm" && !["Refining", "Tränke", "Essen"].includes(gd.recipes[id].group);
+        const sellLocs = bmOk ? [city, C.BLACK_MARKET] : [city];
+        const base = Object.assign({}, o, { city, buyCity: city, sellLocs, memo });
+        const nf = C.evalCraft(gd, store, settings, id, Object.assign({}, base, { focus: false }));
+        if (nf && nf.margin >= minM && (!bestNf || nf.profit > bestNf.profit)) bestNf = nf;
+        if (withFocus) {
+          const f = C.evalCraft(gd, store, settings, id, Object.assign({}, base, { focus: true }));
+          if (f && f.margin >= minM && (!bestF || f.profit / Math.max(1, f.focusCost) > bestF.profit / Math.max(1, bestF.focusCost))) bestF = f;
+        }
+      }
+      if (bestNf || bestF) items.push({ id, nf: bestNf, f: bestF });
+    }
+    return items;
+  }
+
+  function runSilver() {
+    if (!ui.sGroups.length || !ui.sTiers.length || !ui.sEnchs.length) { setStatus("Bitte Gruppen, Tiers und Verzauberung wählen.", true); return; }
+    const ids = sIds();
+    if (ids.length > 4000 && !confirm(`${ids.length} Rezepte – das dauert etwas. Starten?`)) return;
+    const mats = new Set();
+    const addMats = (id, depth) => {
+      const r = gd.recipes[id]; if (!r || depth > 8) return;
+      for (const [rid] of r.res) {
+        if (mats.has(rid)) continue;
+        mats.add(rid);
+        if (ui.sChain && gd.recipes[rid] && C.REFINING_CATS.has(gd.recipes[rid].cat)) addMats(rid, depth + 1);
+      }
+    };
+    ids.forEach((id) => addMats(id, 0));
+    const locs = sCities().concat(ui.sMode === "bm" ? [C.BLACK_MARKET] : []);
+    runJobs([[[...new Set(ids.concat([...mats]))], locs]], async () => {
+      // Verkaufszahlen nur für Items mit Gewinn laden
+      const items = silverEvaluate(ids);
+      const hist = {};
+      for (const x of items) for (const ev of [x.nf, x.f]) if (ev && ev.profit > 0) (hist[ev.sellLoc] = hist[ev.sellLoc] || new Set()).add(ev.id);
+      const jobs = Object.entries(hist).map(([loc, set]) => [[...set], [loc], "history"]);
+      if (jobs.length) { busy = false; await runJobs(jobs, () => finishSilver(ids)); } else finishSilver(ids);
+    });
+  }
+
+  function finishSilver(ids) {
+    const items = silverEvaluate(ids);
+    const res = C.planSilver(items, {
+      budget: Number(ui.sBudget) || 0, focus: Number(ui.sFocus) || 0, days: Number(ui.sDays) || 1, unknownCap: 0,
+    });
+    const usedIds = new Set(res.plan.map((p) => p.ev.id));
+    const more = items.filter((x) => !usedIds.has(x.id)).map((x) => x.nf || x.f).filter((ev) => ev && ev.profit > 0)
+      .map((ev) => ({ ev, perDay: ev.per_day ? ev.profit * Math.floor(ev.per_day / ev.rec.amount) : null }))
+      .sort((a, b) => (b.perDay || 0) - (a.perDay || 0)).slice(0, 20);
+    silver = { plan: res.plan, more, budgetLeft: res.budgetLeft, focusLeft: res.focusLeft, checked: ids.length, found: items.length, at: Date.now() };
+    storage.set("silver", null);
+    renderSilver();
+  }
+
+  function renderSilverOpts() {
+    [...$("s-mode").children].forEach((b) => b.classList.toggle("on", b.dataset.m === ui.sMode));
+    $("s-mode-info").innerHTML = ui.sMode === "safe"
+      ? "Alles in <b>einer Royal City</b>: Material kaufen, craften und sofort an Kaufgebote verkaufen. Kein Transport durch rote Zonen, kein Warten auf Käufer."
+      : "Ausrüstung wird sofort an den <b>Black Market</b> (Caerleon) verkauft. Höhere Preise, aber Transport durch <b>rote Zone</b> – außer du craftest direkt in Caerleon.";
+    const mini = (box, values, list, label) => {
+      box.innerHTML = "";
+      values.forEach((v) => box.append(el("button", {
+        class: list.includes(v) ? "on" : "",
+        on: { click: () => { const i = list.indexOf(v); if (i >= 0) list.splice(i, 1); else list.push(v); saveUi(); renderSilverOpts(); } },
+      }, label(v))));
+    };
+    mini($("s-groups"), S_GROUPS, ui.sGroups, (g) => g);
+    mini($("s-tiers"), TIERS, ui.sTiers, (t) => "T" + t);
+    mini($("s-enchs"), ENCHS, ui.sEnchs, (e) => "." + e);
+    const sel = $("s-city");
+    sel.innerHTML = "";
+    const pool = ui.sMode === "bm" ? C.ROYAL_CITIES.concat(["Caerleon"]) : C.ROYAL_CITIES;
+    if (ui.sCity !== "auto" && !pool.includes(ui.sCity)) ui.sCity = "auto";
+    sel.append(el("option", { value: "auto", textContent: "Beste Stadt je Item" }));
+    pool.forEach((c) => sel.append(el("option", { value: c, textContent: c })));
+    sel.value = ui.sCity;
+    $("s-buymode").value = ui.sBuyMode; $("s-margin").value = ui.sMargin; $("s-days").value = ui.sDays;
+    $("s-age").value = ui.sAge; $("s-chain").checked = ui.sChain;
+    if (document.activeElement !== $("s-budget")) $("s-budget").value = ui.sBudget;
+    $("s-focus").value = ui.sFocus; $("s-fce").value = ui.sFce;
+    let n = 0;
+    try { n = sIds().length; } catch (e) { /* noch keine Daten */ }
+    $("s-opts-sum").textContent = `${n} Rezepte · ${ui.sCity === "auto" ? "beste Stadt" : ui.sCity}`;
+  }
+
+  function evWhere(ev) {
+    const transport = ev.sellLoc === C.BLACK_MARKET && ev.city !== "Caerleon";
+    return { text: `Craften & kaufen in ${ev.city} → Sofortverkauf ${ev.sellLoc === C.BLACK_MARKET ? "an Black Market" : "in " + ev.sellLoc}`, transport };
+  }
+
+  function silverCard(p, isPlan) {
+    const ev = p.ev;
+    const w = evWhere(ev);
+    const fact = (label, value, cls) => el("div", {}, el("b", {}, label), el("span", { class: "num " + (cls || "") }, value));
+    return el("div", { class: "stage " + marginTag(ev.margin, ev.profit), on: { click: () => openInCraft(p) } },
+      el("div", { class: "h" },
+        el("div", { class: "name" }, (isPlan ? `${S(p.pieces)} × ` : "") + gd.label(ev.id)),
+        el("div", { class: "profit num pos" }, isPlan ? S(p.profit) : (p.perDay ? S(p.perDay) + "/Tag" : S(ev.profit)))),
+      el("div", { class: "where" }, w.text, w.transport ? el("span", { class: "warn" }, "  🐎 Transport durch rote Zone") : null),
+      el("div", { class: "facts" },
+        isPlan ? fact("Einkauf", S(p.cost)) : fact("Gewinn/Craft", S(ev.profit), "pos"),
+        fact("Marge", C.fmtNum(ev.margin) + " %", "pos"),
+        fact("Verk./Tag", ev.per_day === null || ev.per_day === undefined ? "?" : C.fmtNum(ev.per_day, ev.per_day < 10 ? 1 : 0)),
+        isPlan ? fact("Crafts", S(p.crafts) + (ev.rec.amount > 1 ? ` à ${ev.rec.amount}` : "")) : fact("Verkauf", S(ev.sellPrice)),
+        fact("Fokus", ev.focus ? (isPlan ? S(p.focus) : "ja") : "–"),
+        fact("Material", ev.buyMode === "order" ? "Kaufauftrag" : "Sofortkauf"),
+      ),
+      ev.selfMade.length ? el("div", { class: "small gold", style: "margin-top:6px" }, "★ Selbst refinen: " + ev.selfMade.map((i) => gd.label(i)).join(", ")) : null,
+    );
+  }
+
+  function renderSilver() {
+    renderSilverOpts();
+    const t = $("s-tiles"), plan = $("s-plan"), more = $("s-more");
+    t.innerHTML = ""; plan.innerHTML = ""; more.innerHTML = "";
+    $("s-shop").style.display = "none"; $("s-more-h").style.display = "none";
+    if (!silver) { $("s-info").textContent = "Budget eingeben und „Silber finden“ tippen."; return; }
+    const P = silver.plan;
+    const profit = P.reduce((a, p) => a + p.profit, 0), cost = P.reduce((a, p) => a + p.cost, 0);
+    const focus = P.reduce((a, p) => a + p.focus, 0);
+    const carried = P.filter((p) => evWhere(p.ev).transport).reduce((a, p) => a + p.pieces * p.ev.sellPrice, 0);
+    t.append(
+      tile(S(profit), "Gewinn mit diesem Plan", profit > 0 ? "good" : ""),
+      tile(S(cost), "Einkauf nötig"),
+      tile(cost ? C.fmtNum(profit / cost * 100) + " %" : "–", "Rendite aufs Budget", profit > 0 ? "good" : ""),
+      ui.sMode === "bm" ? tile(S(carried), "Warenwert im Transport 🐎", carried ? "bad" : "") : tile(S(focus), "Fokus verbraucht"),
+    );
+    const age = Math.round((Date.now() - silver.at) / 60000);
+    $("s-info").textContent = `${silver.checked} Rezepte geprüft · ${silver.found} erfüllen die Regeln · Plan mit ${P.length} Items` +
+      ` · Stand vor ${age} min · Tippen öffnet den Rechner`;
+    if (!P.length) {
+      plan.append(el("div", { class: "empty" }, "Gerade nichts, das alle Sicherheitsregeln erfüllt. Tipp: Mindest-Marge senken, mehr Gruppen/Tiers wählen, „Ganze Kette“ einschalten oder Fokus eintragen."));
+    }
+    P.forEach((p) => plan.append(silverCard(p, true)));
+    if (P.length) $("s-shop").style.display = "";
+    if (silver.more.length) {
+      $("s-more-h").style.display = "";
+      silver.more.forEach((m) => more.append(silverCard(m, false)));
+    }
+  }
+
+  function openInCraft(p) {
+    const ev = p.ev;
+    Object.assign(ui, {
+      cItem: ev.id, cQty: p.pieces || ev.rec.amount * Math.max(1, Math.floor((ev.per_day || ev.rec.amount) / ev.rec.amount)),
+      cCity: ev.city, cBuy: C.SAME_CITY, cBuyMode: ev.buyMode, cSell: ev.sellLoc, cSellMode: ev.sellMode,
+      cFocus: ev.focus, cDaily: 0, cGroup: ev.rec.group,
+    });
+    saveUi();
+    show("craft");
+  }
+
+  function silverToShop() {
+    if (!silver || !silver.plan.length) return;
+    addToShop(silver.plan.map((p) => ({ id: p.ev.id, crafts: p.crafts, city: p.ev.city, buy_city: p.ev.buyCity,
+      buy_mode: p.ev.buyMode, focus: p.ev.focus, daily: 0, sell_loc: p.ev.sellLoc, sell_mode: p.ev.sellMode })));
+    $("s-shop").textContent = "✔ Plan in der Einkaufsliste";
+    setTimeout(() => { $("s-shop").textContent = "🛒 Ganzen Plan zur Einkaufsliste"; }, 1800);
+  }
+
   // ------------------------------------------------------------ Crafting-Rechner
   const GROUPS = ["Tränke", "Essen", "Waffen", "Rüstung", "Nebenhand", "Taschen & Umhänge", "Sammlerausrüstung", "Werkzeuge", "Refining"];
 
@@ -745,6 +937,7 @@
     document.querySelectorAll("nav.tabs button").forEach((b) => b.classList.toggle("on", b.dataset.view === view));
     if (view === "shop") renderShop();
     if (view === "craft") { renderCraftSearch(); renderCraft(); }
+    if (view === "silver") renderSilver();
     if (view === "settings") renderSettings();
     window.scrollTo(0, 0);
   }
@@ -781,6 +974,24 @@
       const n = calcAmount(r, ui.focus);
       if (n > 0) { addToShop([shopEntry(r, n)]); $("calc-shop").textContent = "✔ Zur Einkaufsliste hinzugefügt"; setTimeout(() => { $("calc-shop").textContent = "🛒 Diese Menge zur Einkaufsliste"; }, 1800); }
     });
+
+    // Silber-Finder
+    [...$("s-mode").children].forEach((b) => b.addEventListener("click", () => {
+      ui.sMode = b.dataset.m; if (ui.sMode === "bm" && !ui.sGroups.some((g) => ["Waffen", "Rüstung", "Nebenhand"].includes(g))) ui.sGroups.push("Waffen", "Rüstung");
+      saveUi(); silver = null; renderSilver();
+    }));
+    const sb = $("s-budget");
+    sb.addEventListener("input", () => { ui.sBudget = sb.value; saveUi(); });
+    [[500000, "500 k"], [1000000, "1 Mio"], [5000000, "5 Mio"], [10000000, "10 Mio"], [0, "∞"]].forEach(([v, l]) =>
+      $("s-quick").append(el("button", { on: { click: () => { ui.sBudget = v; sb.value = v; saveUi(); } } }, l)));
+    const sbind = (id, key, num) => $(id).addEventListener("change", (e) => {
+      ui[key] = e.target.type === "checkbox" ? e.target.checked : num ? Number(e.target.value) || 0 : e.target.value;
+      saveUi(); renderSilverOpts();
+    });
+    sbind("s-focus", "sFocus", true); sbind("s-fce", "sFce", true); sbind("s-city", "sCity"); sbind("s-buymode", "sBuyMode");
+    sbind("s-margin", "sMargin", true); sbind("s-days", "sDays", true); sbind("s-age", "sAge", true); sbind("s-chain", "sChain");
+    $("s-run").addEventListener("click", runSilver);
+    $("s-shop").addEventListener("click", silverToShop);
 
     // Crafting
     let st = null;
@@ -868,9 +1079,8 @@
       return;
     }
     render();
-    show(ui.view || "refine");
-    if (!hasPrices()) setStatus("Tippe auf „Live-Preise laden“.");
-    else setStatus("Gespeicherte Preise · für aktuelle Werte „Live-Preise laden“");
+    show(ui.view || "silver");
+    setStatus(hasPrices() ? "Gespeicherte Preise vorhanden · beim Suchen/Laden werden sie aktualisiert" : "Bereit – Preise werden beim Suchen geladen");
     registerSW();
   }
   start();

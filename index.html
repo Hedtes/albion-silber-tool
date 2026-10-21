@@ -134,7 +134,11 @@
       <div class="card qty">
         <div style="font-weight:800;font-size:17px" id="a-title"></div>
         <div class="mini-chips" id="a-enchs" style="margin-top:8px"></div>
-        <label class="t" for="a-qty" style="display:block;margin-top:12px">HERSTELLEN · Stück</label>
+        <div class="seg" id="a-input" style="margin-top:12px">
+          <button data-i="qty">Stückzahl</button>
+          <button data-i="budget">Silber-Einsatz</button>
+        </div>
+        <label class="t" for="a-qty" id="a-qty-label" style="display:block;margin-top:10px">HERSTELLEN · Stück</label>
         <input class="big num" id="a-qty" type="number" inputmode="numeric" min="1" step="1" value="100">
         <div class="small" style="color:var(--gold-lt);margin-top:6px" id="a-crafts-info"></div>
         <div class="quick" id="a-quick"></div>

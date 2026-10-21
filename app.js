@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const C = window.Core;
-  const VERSION = "1.3.0";
+  const VERSION = "1.3.1";
   const $ = (id) => document.getElementById(id);
   const S = C.fmtSilver;
   const SLOW_DAYS = 7;
@@ -28,7 +28,7 @@
     sort: "qty", focus: false, chain: false, view: "silver",
     cItem: null, cGroup: "Tränke", cQty: 100, cCity: C.AUTO_CITY, cBuy: C.SAME_CITY, cBuyMode: "instant",
     cSell: C.AUTO_MARKET, cSellMode: "order", cFocus: false, cDaily: 0, cStation: 0,
-    aKind: "potion", aBase: "T4_POTION_HEAL", aEnch: 0, aQty: 100, aCity: C.AUTO_CITY, aBuy: C.SAME_CITY,
+    aKind: "potion", aBase: "T4_POTION_HEAL", aEnch: 0, aQty: 100, aInput: "qty", aBudget: 1000000, aCity: C.AUTO_CITY, aBuy: C.SAME_CITY,
     aSell: C.AUTO_MARKET, aSellMode: "order", aBuyMode: "instant", aDaily: 0, aFocus: false,
     sMode: "safe", sBudget: 1000000, sFocus: 0, sFce: 0, sCity: "auto", sBuyMode: "instant", sChain: true,
     sMargin: 10, sDays: 1, sAge: 6, sGroups: ["Refining", "Tränke", "Essen"], sTiers: [4, 5, 6], sEnchs: [0, 1, 2],
@@ -640,6 +640,25 @@
       focus: ui.aFocus, daily: Number(ui.aDaily) || 0, sellLocs, sellMode: ui.aSellMode };
   }
   const aQty = () => Math.max(1, Math.floor(Number(ui.aQty) || 1));
+  const aBudget = () => Math.max(0, Math.floor(Number(ui.aBudget) || 0));
+
+  /**
+   * Stückzahl für die Rechnung: entweder direkt eingegeben oder aus dem Silber-Einsatz:
+   * die größte Menge, deren Einkauf (über den billigsten Weg) ins Budget passt.
+   */
+  function aPieces(id, o) {
+    if (ui.aInput !== "budget") return { pieces: aQty() };
+    const rec = gd.recipes[id];
+    const budget = aBudget();
+    const costOf = (n) => C.cheapPlan(gd, store, settings, id, n * rec.amount, o).buyCost;
+    const one = costOf(1);
+    if (one === null) return { pieces: rec.amount, unknown: true };
+    if (one > budget) return { pieces: 0, tooSmall: one };
+    let lo = 1, hi = 2;
+    while (hi < 1e6) { const c = costOf(hi); if (c === null || c > budget) break; lo = hi; hi *= 2; }
+    while (hi - lo > 1) { const mid = Math.floor((lo + hi) / 2); const c = costOf(mid); if (c !== null && c <= budget) lo = mid; else hi = mid; }
+    return { pieces: lo * rec.amount };
+  }
 
   function renderAlchSearch() {
     [...$("a-kind").children].forEach((b) => b.classList.toggle("on", b.dataset.k === (ui.aKind || "potion")));
@@ -689,6 +708,22 @@
     else if (/^\d+$/.test(clean)) store.setManual(item, loc, kind, Number(clean));
     else return;
     renderAlch();
+  }
+
+  function renderAlchQuick() {
+    const box = $("a-quick");
+    const budgetMode = ui.aInput === "budget";
+    const key = budgetMode ? "b" : "q";
+    if (box.dataset.mode === key) return;
+    box.dataset.mode = key;
+    box.innerHTML = "";
+    const vals = budgetMode ? [[100000, "100 k"], [500000, "500 k"], [1000000, "1 Mio"], [5000000, "5 Mio"], [10000000, "10 Mio"]]
+      : [[10, "10"], [50, "50"], [100, "100"], [500, "500"], [1000, "1.000"]];
+    vals.forEach(([v, l]) => box.append(el("button", { on: { click: () => {
+      $("a-qty").value = v;
+      if (ui.aInput === "budget") ui.aBudget = v; else ui.aQty = v;
+      saveUi(); renderAlch();
+    } } }, l)));
   }
 
   function renderAlchOpts(o) {
@@ -748,10 +783,21 @@
       const e = gd.recipes[v].ench;
       eb.append(el("button", { class: e === rec.ench ? "on" : "", on: { click: () => { ui.aEnch = e; saveUi(); renderAlch(); } } }, "." + e));
     });
-    if (document.activeElement !== $("a-qty")) $("a-qty").value = ui.aQty;
-    const plan = C.cheapPlan(gd, store, settings, id, aQty(), o);
-    $("a-crafts-info").textContent = `= ${S(plan.crafts)} Crafts à ${rec.amount} Stück` + (plan.pieces !== aQty() ? ` → ergibt ${S(plan.pieces)} Stück` : "") +
-      ` · Rücklaufquote ${C.fmtNum(plan.rrr * 100)} %`;
+    const budgetMode = ui.aInput === "budget";
+    [...$("a-input").children].forEach((bt) => bt.classList.toggle("on", bt.dataset.i === (budgetMode ? "budget" : "qty")));
+    $("a-qty-label").textContent = budgetMode ? "SILBER-EINSATZ · so viel willst du ausgeben" : "HERSTELLEN · Stück";
+    if (document.activeElement !== $("a-qty")) $("a-qty").value = budgetMode ? ui.aBudget : ui.aQty;
+    renderAlchQuick();
+    const pc = aPieces(id, o);
+    const plan = C.cheapPlan(gd, store, settings, id, Math.max(pc.pieces, rec.amount), o);
+    if (budgetMode) {
+      $("a-crafts-info").textContent = pc.unknown ? "Erst Live-Preise laden – dann rechnet das Tool die Menge aus." :
+        pc.tooSmall ? `Zu wenig: ein Craft kostet schon ${S(pc.tooSmall)} Silber.` :
+        `Für ${S(aBudget())} Silber: ${S(plan.pieces)} Stück (${S(plan.crafts)} Crafts) · Einkauf ${S(plan.buyCost)} · übrig ${S(aBudget() - (plan.buyCost || 0))}`;
+    } else {
+      $("a-crafts-info").textContent = `= ${S(plan.crafts)} Crafts à ${rec.amount} Stück` + (plan.pieces !== aQty() ? ` → ergibt ${S(plan.pieces)} Stück` : "") +
+        ` · Rücklaufquote ${C.fmtNum(plan.rrr * 100)} %`;
+    }
 
     // Banner
     const b = $("a-banner"), r = plan.res;
@@ -765,17 +811,20 @@
     // Stufenvergleich
     const tbl = $("a-compare");
     tbl.innerHTML = "";
-    tbl.append(el("tr", {}, el("th", {}, "Stufe"), el("th", {}, "Kosten/Stk"), el("th", {}, "Verkauf"), el("th", {}, "Gewinn/Stk"), el("th", {}, "Marge")));
+    tbl.append(el("tr", {}, el("th", {}, ""), el("th", {}, "Kosten / Verkauf"), el("th", {}, "Gewinn/Stk"),
+      el("th", {}, budgetMode ? "fürs Budget" : "Gewinn gesamt")));
     aVariants(ui.aBase).forEach((v) => {
-      const p = v === id ? plan : C.cheapPlan(gd, store, settings, v, aQty(), aOpts(v));
+      const vo = aOpts(v);
+      const p = v === id ? plan : C.cheapPlan(gd, store, settings, v, Math.max(aPieces(v, vo).pieces, gd.recipes[v].amount), vo);
       const ok = p.complete;
       const cls = ok ? (p.res.profit > 0 ? "pos" : "neg") : "";
       tbl.append(el("tr", { class: "click" + (v === id ? " sel key" : ""), on: { click: () => { ui.aEnch = gd.recipes[v].ench; saveUi(); renderAlch(); } } },
-        el("td", {}, "." + gd.recipes[v].ench),
-        el("td", {}, p.unitCost === null ? "–" : S(p.unitCost)),
-        el("td", {}, p.best ? S(p.best.price) : "–"),
-        el("td", { class: cls }, ok ? S(p.res.profit / p.pieces) : "–"),
-        el("td", { class: cls }, ok ? C.fmtNum(p.res.margin) + " %" : "–")));
+        el("td", { style: "font-weight:800" }, "." + gd.recipes[v].ench),
+        el("td", {}, `${p.unitCost === null ? "–" : S(p.unitCost)} / ${p.best ? S(p.best.price) : "–"}`),
+        el("td", { class: cls }, ok ? S(p.res.profit / p.pieces) : "–",
+          ok ? el("div", { class: "small", style: "font-weight:600" }, C.fmtNum(p.res.margin) + " %") : null),
+        el("td", { class: cls }, ok ? S(p.res.profit) : "–",
+          budgetMode && ok ? el("div", { class: "small muted", style: "font-weight:600" }, S(p.pieces) + " Stk") : null)));
     });
 
     // Billigster Weg je Zutat
@@ -1180,8 +1229,11 @@
     $("a-search").addEventListener("input", () => { clearTimeout(at); at = setTimeout(renderAlchSearch, 150); });
     const aq = $("a-qty");
     let aqt = null;
-    aq.addEventListener("input", () => { ui.aQty = aq.value; saveUi(); clearTimeout(aqt); aqt = setTimeout(renderAlch, 250); });
-    [10, 50, 100, 500, 1000].forEach((v) => $("a-quick").append(el("button", { on: { click: () => { aq.value = v; ui.aQty = v; saveUi(); renderAlch(); } } }, S(v))));
+    aq.addEventListener("input", () => {
+      if (ui.aInput === "budget") ui.aBudget = aq.value; else ui.aQty = aq.value;
+      saveUi(); clearTimeout(aqt); aqt = setTimeout(renderAlch, 300);
+    });
+    [...$("a-input").children].forEach((bt) => bt.addEventListener("click", () => { ui.aInput = bt.dataset.i; saveUi(); renderAlch(); }));
     $("a-load").addEventListener("click", loadAlch);
     const abind = (id, key, num) => $(id).addEventListener("change", (e) => {
       ui[key] = e.target.type === "checkbox" ? e.target.checked : num ? Number(e.target.value) || 0 : e.target.value;

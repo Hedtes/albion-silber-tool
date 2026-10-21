@@ -212,3 +212,5 @@ nav.tabs button { font-size: 10.5px; }
 .way .save { color: var(--pos); font-weight: 700; font-size: 12.5px; }
 table.res tr.sel td { background: rgba(210, 154, 53, .15); }
 table.res tr.click { cursor: pointer; }
+#a-compare { font-size: 13px; }
+#a-compare td, #a-compare th { white-space: nowrap; padding-left: 2px; padding-right: 2px; }

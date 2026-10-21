@@ -119,6 +119,69 @@
     <div class="list" id="list"></div>
   </section>
 
+  <!-- ===================================================== Tränke & Essen -->
+  <section class="view" id="view-alch">
+    <div class="seg" id="a-kind" style="margin-bottom:10px">
+      <button data-k="potion">🧪 Tränke</button>
+      <button data-k="food">🍲 Essen</button>
+    </div>
+    <div class="card">
+      <input id="a-search" type="search" placeholder="Suchen, z. B. „lebenstrank“ oder „eintopf“" style="width:100%;padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--panel2);font-size:16px">
+      <div id="a-results" style="margin-top:8px;max-height:220px;overflow-y:auto"></div>
+    </div>
+
+    <div id="a-calc" style="display:none">
+      <div class="card qty">
+        <div style="font-weight:800;font-size:17px" id="a-title"></div>
+        <div class="mini-chips" id="a-enchs" style="margin-top:8px"></div>
+        <label class="t" for="a-qty" style="display:block;margin-top:12px">HERSTELLEN · Stück</label>
+        <input class="big num" id="a-qty" type="number" inputmode="numeric" min="1" step="1" value="100">
+        <div class="small" style="color:var(--gold-lt);margin-top:6px" id="a-crafts-info"></div>
+        <div class="quick" id="a-quick"></div>
+        <button class="btn primary block" id="a-load" style="margin-top:12px">⟳  Live-Preise laden</button>
+        <div class="progress"><div></div></div>
+        <div class="status"></div>
+      </div>
+
+      <div class="card">
+        <details class="opts">
+          <summary>Städte &amp; Fokus <span class="muted small" id="a-opts-sum"></span></summary>
+          <div class="grid">
+            <div class="field"><label>Crafting-Stadt</label><select id="a-city"></select></div>
+            <div class="field"><label>Einkauf in</label><select id="a-buy"></select></div>
+            <div class="field"><label>Verkauf in</label><select id="a-sell"></select></div>
+            <div class="field"><label>Verkaufsart</label><select id="a-sellmode">
+              <option value="order">Verkaufsauftrag</option><option value="instant">Sofortverkauf</option></select></div>
+            <div class="field"><label>Einkaufsart</label><select id="a-buymode">
+              <option value="instant">Sofortkauf</option><option value="order">Kaufauftrag</option></select></div>
+            <div class="field"><label>Tagesbonus %</label><input id="a-daily" type="number" inputmode="decimal" value="0"></div>
+            <div class="full"><label class="toggle"><span>Mit Fokus craften</span><input type="checkbox" id="a-focus"></label></div>
+          </div>
+        </details>
+      </div>
+
+      <div class="banner" id="a-banner"></div>
+
+      <div class="card">
+        <b>Welche Stufe lohnt sich?</b>
+        <div class="muted small" style="margin:2px 0 6px">Kosten über den billigsten Weg · Tippen wählt die Stufe</div>
+        <table class="res num" id="a-compare"></table>
+      </div>
+
+      <div class="card">
+        <b>Billigster Weg pro Zutat</b>
+        <div id="a-ways"></div>
+      </div>
+
+      <div class="card">
+        <div class="row" style="justify-content:space-between"><b>Das musst du kaufen</b>
+          <button class="btn" id="a-share">Teilen / Kopieren</button></div>
+        <div class="muted small" id="a-buy-info" style="margin-top:4px"></div>
+        <div id="a-buylist"></div>
+      </div>
+    </div>
+  </section>
+
   <!-- ===================================================== Crafting -->
   <section class="view" id="view-craft">
     <div class="card">
@@ -222,6 +285,7 @@
 <nav class="tabs">
   <button data-view="silver"><span class="ic">💰</span>Silber</button>
   <button data-view="refine" class="on"><span class="ic">⛏</span>Refining</button>
+  <button data-view="alch"><span class="ic">🧪</span>Tränke</button>
   <button data-view="craft"><span class="ic">⚒</span>Crafting</button>
   <button data-view="shop"><span class="ic">🛒</span>Einkauf</button>
   <button data-view="settings"><span class="ic">⚙</span>Optionen</button>

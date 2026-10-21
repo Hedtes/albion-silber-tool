@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const C = window.Core;
-  const VERSION = "1.2.0";
+  const VERSION = "1.3.0";
   const $ = (id) => document.getElementById(id);
   const S = C.fmtSilver;
   const SLOW_DAYS = 7;
@@ -28,6 +28,8 @@
     sort: "qty", focus: false, chain: false, view: "silver",
     cItem: null, cGroup: "Tränke", cQty: 100, cCity: C.AUTO_CITY, cBuy: C.SAME_CITY, cBuyMode: "instant",
     cSell: C.AUTO_MARKET, cSellMode: "order", cFocus: false, cDaily: 0, cStation: 0,
+    aKind: "potion", aBase: "T4_POTION_HEAL", aEnch: 0, aQty: 100, aCity: C.AUTO_CITY, aBuy: C.SAME_CITY,
+    aSell: C.AUTO_MARKET, aSellMode: "order", aBuyMode: "instant", aDaily: 0, aFocus: false,
     sMode: "safe", sBudget: 1000000, sFocus: 0, sFce: 0, sCity: "auto", sBuyMode: "instant", sChain: true,
     sMargin: 10, sDays: 1, sAge: 6, sGroups: ["Refining", "Tränke", "Essen"], sTiers: [4, 5, 6], sEnchs: [0, 1, 2],
   }, storage.get("ui", {}));
@@ -74,7 +76,7 @@
   async function runJobs(jobs, done) {
     if (busy) { setStatus("Es läuft bereits ein Abruf …"); return; }
     busy = true; abort = new AbortController();
-    $("load-btn").disabled = true; $("shop-reload").disabled = true; $("c-load").disabled = true; $("s-run").disabled = true;
+    $("load-btn").disabled = true; $("shop-reload").disabled = true; $("c-load").disabled = true; $("s-run").disabled = true; $("a-load").disabled = true;
     let errors = 0;
     try {
       for (let k = 0; k < jobs.length; k++) {
@@ -95,7 +97,7 @@
       setStatus("Fehler beim Abruf: " + (e.message || e), true);
     } finally {
       busy = false; progress(0, 0);
-      $("load-btn").disabled = false; $("shop-reload").disabled = false; $("c-load").disabled = false; $("s-run").disabled = false;
+      $("load-btn").disabled = false; $("shop-reload").disabled = false; $("c-load").disabled = false; $("s-run").disabled = false; $("a-load").disabled = false;
       if (done) await done();
     }
   }
@@ -282,6 +284,7 @@
     renderChips(); renderOpts(); renderTiles(); renderList();
     if ($("calc").classList.contains("on")) renderCalc();
     if (ui.view === "craft") renderCraft();
+    if (ui.view === "alch") renderAlch();
     if (ui.view === "shop") renderShop();
     $("premium-badge").textContent = settings.premium ? "★ Premium · 4 %" : "ohne Premium · 8 %";
   }
@@ -618,6 +621,198 @@
     setTimeout(() => { $("s-shop").textContent = "🛒 Ganzen Plan zur Einkaufsliste"; }, 1800);
   }
 
+  // ------------------------------------------------------------ Tränke & Essen (billigster Weg)
+  let alchData = { alts: {}, names: {} };
+  const aCat = () => ui.aKind === "food" ? "food" : "potion";
+  const aVariants = (base) => [0, 1, 2, 3].map((e) => (e ? base + "@" + e : base)).filter((id) => gd.recipes[id]);
+  const aId = () => {
+    if (!ui.aBase || !gd.recipes[ui.aBase]) return null;
+    const v = aVariants(ui.aBase);
+    return v.find((id) => gd.recipes[id].ench === ui.aEnch) || v[0];
+  };
+  function aOpts(id) {
+    const rec = gd.recipes[id];
+    let city = ui.aCity;
+    if (city === C.AUTO_CITY) city = C.bonusCityFor(settings, rec.cat) || "Brecilien";
+    const buyCity = ui.aBuy === C.SAME_CITY ? city : ui.aBuy;
+    const sellLocs = ui.aSell === C.AUTO_MARKET ? C.MARKETS : [ui.aSell === C.SAME_CITY ? city : ui.aSell];
+    return { city, buyCity, buyMode: ui.aBuyMode, maxAge: settings.max_age_hours, alts: alchData.alts,
+      focus: ui.aFocus, daily: Number(ui.aDaily) || 0, sellLocs, sellMode: ui.aSellMode };
+  }
+  const aQty = () => Math.max(1, Math.floor(Number(ui.aQty) || 1));
+
+  function renderAlchSearch() {
+    [...$("a-kind").children].forEach((b) => b.classList.toggle("on", b.dataset.k === (ui.aKind || "potion")));
+    const words = $("a-search").value.toLowerCase().split(/\s+/).filter(Boolean);
+    const ids = Object.keys(gd.recipes).filter((id) => {
+      const r = gd.recipes[id];
+      if (r.cat !== aCat() || r.ench !== 0) return false;
+      const hay = (gd.name(id) + " t" + r.tier).toLowerCase();
+      return words.every((w) => hay.includes(w));
+    }).sort((a, b) => gd.name(a).localeCompare(gd.name(b), "de") || gd.recipes[a].tier - gd.recipes[b].tier);
+    const box = $("a-results");
+    box.innerHTML = "";
+    ids.slice(0, 80).forEach((id) => box.append(el("div", {
+      class: "shop-item", style: "cursor:pointer" + (id === ui.aBase ? ";color:var(--gold)" : ""),
+      on: { click: () => { ui.aBase = id; ui.aEnch = 0; saveUi(); renderAlchSearch(); renderAlch(); loadAlch(); $("a-calc").scrollIntoView({ behavior: "smooth" }); } },
+    }, el("div", { class: "t", style: "font-weight:600" }, gd.label(id)),
+      el("div", { class: "small muted" }, `${gd.recipes[id].amount} Stk/Craft · bis .${aVariants(id).length - 1}`))));
+    if (!ids.length) box.append(el("div", { class: "empty" }, "Nichts gefunden"));
+  }
+
+  function alchItemsToLoad(variants) {
+    const items = new Set();
+    const walk = (id, depth) => {
+      if (items.has(id) || depth > 6) return;
+      items.add(id);
+      (alchData.alts[id] || []).forEach((a) => a.res.forEach((r) => walk(r[0], depth + 1)));
+      const r = gd.recipes[id];
+      if (r && depth > 0 && (r.cat === "food" || r.cat === "potion") && r.ench === 0) r.res.forEach((x) => walk(x[0], depth + 1));
+    };
+    variants.forEach((v) => gd.recipes[v].res.forEach((x) => walk(x[0], 1)));
+    return [...items];
+  }
+
+  function loadAlch() {
+    const id = aId(); if (!id) return;
+    const variants = aVariants(ui.aBase);
+    const o = aOpts(id);
+    runJobs([[alchItemsToLoad(variants), [o.buyCity]], [variants, o.sellLocs], [variants, o.sellLocs, "history"]], () => render());
+  }
+
+  function aEditPrice(item, loc, kind) {
+    const [cur] = store.get(item, loc, kind);
+    const v = window.prompt(`${gd.label(item)} – ${loc}\nPreis in Silber (leer = Live-Preis):`, cur === null ? "" : String(Math.round(cur)));
+    if (v === null) return;
+    const clean = v.replace(/[.\s]/g, "");
+    if (clean === "") store.setManual(item, loc, kind, null);
+    else if (/^\d+$/.test(clean)) store.setManual(item, loc, kind, Number(clean));
+    else return;
+    renderAlch();
+  }
+
+  function renderAlchOpts(o) {
+    const fill = (sel, values, cur, rename) => {
+      sel.innerHTML = "";
+      values.forEach((v) => sel.append(el("option", { value: v, textContent: (rename && rename[v]) || v, selected: v === cur })));
+    };
+    fill($("a-city"), [C.AUTO_CITY].concat(C.CITIES), ui.aCity);
+    fill($("a-buy"), [C.SAME_CITY].concat(C.CITIES), ui.aBuy, { [C.SAME_CITY]: "Wie Crafting-Stadt" });
+    fill($("a-sell"), [C.AUTO_MARKET, C.SAME_CITY].concat(C.CITIES), ui.aSell, { [C.SAME_CITY]: "Wie Crafting-Stadt" });
+    $("a-sellmode").value = ui.aSellMode; $("a-buymode").value = ui.aBuyMode;
+    $("a-daily").value = ui.aDaily; $("a-focus").checked = ui.aFocus;
+    $("a-opts-sum").textContent = `${o.city}${o.buyCity !== o.city ? " · Kauf " + o.buyCity : ""} · ${ui.aSell === C.AUTO_MARKET ? "bester Markt" : o.sellLocs[0]}${ui.aFocus ? " · Fokus" : ""}`;
+  }
+
+  function describeNode(node, qty, solver, depth) {
+    const lines = [];
+    if (!node || node.how !== "craft" || qty <= 0) return lines;
+    const crafts = Math.ceil(qty / node.alt.amount);
+    const parts = node.alt.res.map(([rid, cnt, ret]) => `${S(buyAmount2(cnt, crafts, node.rrr, ret))} × ${gd.label(rid)}`);
+    const isShred = node.alt.res.length === 1 && node.alt.amount > 1;
+    const srcQty = isShred ? buyAmount2(node.alt.res[0][1], crafts, node.rrr, node.alt.res[0][2]) : 0;
+    lines.push(el("div", { class: "step" }, isShred
+      ? `${S(srcQty)} × ${gd.label(node.alt.res[0][0])} ${node.item === "T1_FISHCHOPS" ? "zerkleinern" : "schreddern"} → ${S(crafts * node.alt.amount)} × ${gd.label(node.item)} (je ${node.alt.amount}${node.alt.res[0][2] ? ", mit Rückgabe" : ""})`
+      : `${S(crafts * node.alt.amount)} × ${gd.label(node.item)} herstellen aus ${parts.join(" + ")}`));
+    // Alternativen bei Umwandlungen zeigen
+    const alts = alchData.alts[node.item] || [];
+    if (alts.length > 1) {
+      const ranked = alts.map((a) => {
+        const c = solver.cheapest(a.res[0][0], 9);
+        return c.unit === null ? null : { src: a.res[0][0], per: c.unit * a.res[0][1] / a.amount };
+      }).filter(Boolean).sort((x, y) => x.per - y.per);
+      if (ranked.length > 1) {
+        lines.push(el("div", { class: "step muted" }, "Pro Stück " + gd.name(node.item) + ": " +
+          ranked.slice(0, 3).map((r, i) => `${i === 0 ? "✔ " : ""}${gd.label(r.src)} ${C.fmtNum(r.per)}`).join(" · ") +
+          ` (${ranked.length} Quellen mit Preis)`));
+      }
+    }
+    node.alt.res.forEach(([rid, cnt, ret], i) => {
+      describeNode(node.children[i], buyAmount2(cnt, crafts, node.rrr, ret), solver, depth + 1).forEach((l) => lines.push(l));
+    });
+    return lines;
+  }
+  const buyAmount2 = (cnt, crafts, rrr, ret) => C.buyAmount(cnt, crafts, rrr, !!ret)[0];
+
+  function renderAlch() {
+    const id = aId();
+    if (!gd || !id) { $("a-calc").style.display = "none"; return; }
+    $("a-calc").style.display = "";
+    const o = aOpts(id);
+    renderAlchOpts(o);
+    const rec = gd.recipes[id];
+    $("a-title").textContent = gd.label(ui.aBase).replace(/ \(T\d\)$/, "") + ` · T${rec.tier}`;
+    const eb = $("a-enchs");
+    eb.innerHTML = "";
+    aVariants(ui.aBase).forEach((v) => {
+      const e = gd.recipes[v].ench;
+      eb.append(el("button", { class: e === rec.ench ? "on" : "", on: { click: () => { ui.aEnch = e; saveUi(); renderAlch(); } } }, "." + e));
+    });
+    if (document.activeElement !== $("a-qty")) $("a-qty").value = ui.aQty;
+    const plan = C.cheapPlan(gd, store, settings, id, aQty(), o);
+    $("a-crafts-info").textContent = `= ${S(plan.crafts)} Crafts à ${rec.amount} Stück` + (plan.pieces !== aQty() ? ` → ergibt ${S(plan.pieces)} Stück` : "") +
+      ` · Rücklaufquote ${C.fmtNum(plan.rrr * 100)} %`;
+
+    // Banner
+    const b = $("a-banner"), r = plan.res;
+    if (!plan.complete) { b.className = "banner"; b.textContent = "Preise fehlen – „Live-Preise laden“ (es werden auch alle Tierteile/Fische geprüft)"; }
+    else {
+      b.className = "banner " + marginTag(r.margin, r.profit);
+      b.innerHTML = `<span class="big num">${r.profit > 0 ? "▲" : "▼"} ${S(r.profit)} Silber</span>` +
+        `${S(plan.pieces)} × ${gd.label(id)} · Marge ${C.fmtNum(r.margin)} % · Einkauf ${S(plan.buyCost)}`;
+    }
+
+    // Stufenvergleich
+    const tbl = $("a-compare");
+    tbl.innerHTML = "";
+    tbl.append(el("tr", {}, el("th", {}, "Stufe"), el("th", {}, "Kosten/Stk"), el("th", {}, "Verkauf"), el("th", {}, "Gewinn/Stk"), el("th", {}, "Marge")));
+    aVariants(ui.aBase).forEach((v) => {
+      const p = v === id ? plan : C.cheapPlan(gd, store, settings, v, aQty(), aOpts(v));
+      const ok = p.complete;
+      const cls = ok ? (p.res.profit > 0 ? "pos" : "neg") : "";
+      tbl.append(el("tr", { class: "click" + (v === id ? " sel key" : ""), on: { click: () => { ui.aEnch = gd.recipes[v].ench; saveUi(); renderAlch(); } } },
+        el("td", {}, "." + gd.recipes[v].ench),
+        el("td", {}, p.unitCost === null ? "–" : S(p.unitCost)),
+        el("td", {}, p.best ? S(p.best.price) : "–"),
+        el("td", { class: cls }, ok ? S(p.res.profit / p.pieces) : "–"),
+        el("td", { class: cls }, ok ? C.fmtNum(p.res.margin) + " %" : "–")));
+    });
+
+    // Billigster Weg je Zutat
+    const ways = $("a-ways");
+    ways.innerHTML = "";
+    for (const x of plan.ings) {
+      const n = x.node;
+      const m = n.market;
+      let how = "Preis fehlt";
+      if (n.unit !== null) how = n.how === "craft" ? `Selbst herstellen: ${S(n.unit)} pro Stück` : `Kaufen: ${S(n.unit)} pro Stück`;
+      const save = n.how === "craft" && m ? (m - n.unit) * x.qty : null;
+      ways.append(el("div", { class: "way" },
+        el("div", { class: "row", style: "justify-content:space-between;flex-wrap:nowrap;align-items:flex-start" },
+          el("b", { style: "flex:1;min-width:0" }, `${S(x.qty)} × ${gd.label(x.id)}`),
+          el("button", { class: "icon-btn", title: "Marktpreis eingeben", on: { click: () => aEditPrice(x.id, o.buyCity, o.buyMode === "instant" ? "sell" : "buy") } }, "✎")),
+        el("div", { class: "small " + (n.how === "craft" ? "gold" : "") }, how + (m && n.how === "craft" ? ` (Markt: ${S(m)})` : "")),
+        save > 0 ? el("div", { class: "save" }, `Spart ${S(save)} Silber gegenüber Kaufen`) : null,
+        describeNode(n, x.qty, plan.solver, 0),
+      ));
+    }
+
+    // Einkaufsliste
+    const bl = $("a-buylist");
+    bl.innerHTML = "";
+    plan.buyList.forEach((it) => bl.append(el("div", { class: "shop-item" },
+      el("div", { class: "t" }, el("div", { style: "font-weight:700" }, `${S(it.qty)} × ${gd.label(it.item)}`),
+        el("div", { class: "small muted" }, `${o.buyCity} · ${it.price === null ? "Preis fehlt" : S(it.price) + " pro Stück"}`)),
+      el("div", { class: "num" }, S(it.cost)))));
+    const sp = plan.directCost !== null && plan.buyCost !== null ? plan.directCost - plan.buyCost : null;
+    $("a-buy-info").innerHTML = plan.buyCost === null ? "Noch nicht alle Preise vorhanden." :
+      `Einkauf gesamt <b>${S(plan.buyCost)}</b> Silber` + (sp > 0 ? ` · <span class="pos">${S(sp)} günstiger</span> als alle Zutaten direkt zu kaufen (${S(plan.directCost)})` : "");
+    renderAlch.text = `Einkauf für ${S(plan.pieces)} × ${gd.label(id)} (${o.buyCity})\n\n` +
+      plan.buyList.map((it) => `${S(it.qty)} × ${gd.label(it.item)}${it.cost !== null ? " – " + S(it.cost) : ""}`).join("\n") +
+      (plan.steps.length ? "\n\nSchritte:\n" + plan.steps.slice().reverse().map((s) => `${S(s.out)} × ${gd.label(s.item)}`).join("\n") : "") +
+      `\n\nEinkauf gesamt: ${S(plan.buyCost)} Silber`;
+  }
+
   // ------------------------------------------------------------ Crafting-Rechner
   const GROUPS = ["Tränke", "Essen", "Waffen", "Rüstung", "Nebenhand", "Taschen & Umhänge", "Sammlerausrüstung", "Werkzeuge", "Refining"];
 
@@ -938,6 +1133,7 @@
     if (view === "shop") renderShop();
     if (view === "craft") { renderCraftSearch(); renderCraft(); }
     if (view === "silver") renderSilver();
+    if (view === "alch") { renderAlchSearch(); renderAlch(); }
     if (view === "settings") renderSettings();
     window.scrollTo(0, 0);
   }
@@ -973,6 +1169,32 @@
       const r = calcRow(); if (!r) return;
       const n = calcAmount(r, ui.focus);
       if (n > 0) { addToShop([shopEntry(r, n)]); $("calc-shop").textContent = "✔ Zur Einkaufsliste hinzugefügt"; setTimeout(() => { $("calc-shop").textContent = "🛒 Diese Menge zur Einkaufsliste"; }, 1800); }
+    });
+
+    // Tränke & Essen
+    [...$("a-kind").children].forEach((b) => b.addEventListener("click", () => {
+      ui.aKind = b.dataset.k; ui.aBase = ui.aKind === "food" ? "T4_MEAL_STEW" : "T4_POTION_HEAL"; ui.aEnch = 0;
+      saveUi(); $("a-search").value = ""; renderAlchSearch(); renderAlch();
+    }));
+    let at = null;
+    $("a-search").addEventListener("input", () => { clearTimeout(at); at = setTimeout(renderAlchSearch, 150); });
+    const aq = $("a-qty");
+    let aqt = null;
+    aq.addEventListener("input", () => { ui.aQty = aq.value; saveUi(); clearTimeout(aqt); aqt = setTimeout(renderAlch, 250); });
+    [10, 50, 100, 500, 1000].forEach((v) => $("a-quick").append(el("button", { on: { click: () => { aq.value = v; ui.aQty = v; saveUi(); renderAlch(); } } }, S(v))));
+    $("a-load").addEventListener("click", loadAlch);
+    const abind = (id, key, num) => $(id).addEventListener("change", (e) => {
+      ui[key] = e.target.type === "checkbox" ? e.target.checked : num ? Number(e.target.value) || 0 : e.target.value;
+      saveUi(); renderAlch();
+    });
+    abind("a-city", "aCity"); abind("a-buy", "aBuy"); abind("a-sell", "aSell"); abind("a-sellmode", "aSellMode");
+    abind("a-buymode", "aBuyMode"); abind("a-daily", "aDaily", true); abind("a-focus", "aFocus");
+    $("a-share").addEventListener("click", async () => {
+      const text = renderAlch.text || "";
+      try {
+        if (navigator.share) await navigator.share({ title: "Einkauf", text });
+        else { await navigator.clipboard.writeText(text); setStatus("Einkaufsliste kopiert"); }
+      } catch (e) { /* abgebrochen */ }
     });
 
     // Silber-Finder
@@ -1072,8 +1294,10 @@
   async function start() {
     wire();
     try {
-      const res = await fetch("data/recipes_all.json");
+      const [res, al] = await Promise.all([fetch("data/recipes_all.json"), fetch("data/alchemy.json")]);
       gd = new C.GameData(await res.json());
+      alchData = await al.json();
+      for (const [k, v] of Object.entries(alchData.names)) if (!gd.names[k]) gd.names[k] = v;
     } catch (e) {
       setStatus("Rezeptdaten konnten nicht geladen werden: " + e.message, true);
       return;

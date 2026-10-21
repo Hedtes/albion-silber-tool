@@ -646,6 +646,98 @@
     return { plan, budgetLeft: budget, focusLeft };
   }
 
+  // ------------------------------------------------------------ Günstigster Weg (Tränke & Essen)
+  /**
+   * Findet für jede Zutat den billigsten Weg: kaufen, selbst herstellen (z. B. Extrakt aus Überresten)
+   * oder umwandeln (Tierteile schreddern, Fisch zerkleinern). Rekursiv, mit Rücklaufquote.
+   * ctx: {city, buyCity, buyMode, maxAge, alts}
+   */
+  function makeSolver(gd, store, s, ctx) {
+    const kind = ctx.buyMode === "instant" ? "sell" : "buy";
+    const memo = {};
+    const market = (item) => {
+      const [p, src, ts] = store.get(item, ctx.buyCity, kind, ctx.maxAge);
+      return p && src !== "alt" ? { price: buyUnitCost(s, p, ctx.buyMode), src, ts } : null;
+    };
+    const altsOf = (item) => {
+      const list = (ctx.alts[item] || []).map((a) => Object.assign({ cat: null }, a));
+      const r = gd.recipes[item];
+      if (r && (r.cat === "food" || r.cat === "potion") && r.ench === 0 && !list.length) list.push({ amount: r.amount, res: r.res, cat: r.cat });
+      return list;
+    };
+    function cheapest(item, depth) {
+      if (memo[item]) return memo[item];
+      memo[item] = { item, unit: null, how: "none", market: null }; // Schutz gegen Schleifen
+      const m = market(item);
+      let best = m ? { item, unit: m.price, how: "buy", market: m.price, src: m.src, ts: m.ts } : null;
+      if ((depth || 0) < 5) {
+        for (const alt of altsOf(item)) {
+          const rrr = returnRate(productionBonus(s, ctx.city, alt.cat || "none", false, 0));
+          let total = 0, ok = true;
+          const children = [];
+          for (const [rid, cnt, ret] of alt.res) {
+            const c = cheapest(rid, (depth || 0) + 1);
+            if (c.unit === null) { ok = false; break; }
+            total += c.unit * cnt * (ret ? 1 - rrr : 1);
+            children.push(c);
+          }
+          if (!ok) continue;
+          const unit = total / alt.amount;
+          if (!best || unit < best.unit - 1e-9) best = { item, unit, how: "craft", alt, rrr, children, market: m ? m.price : null };
+        }
+      }
+      return (memo[item] = best || { item, unit: null, how: "none", market: m ? m.price : null });
+    }
+    /** Mengen entlang des billigsten Wegs auflösen. out = {buy:{id:qty}, steps:[]} */
+    function expand(node, qty, out, depth) {
+      if (qty <= 0 || !node) return;
+      if (node.how !== "craft") { out.buy[node.item] = (out.buy[node.item] || 0) + qty; return; }
+      const crafts = Math.ceil(qty / node.alt.amount);
+      out.steps.push({ item: node.item, qty, crafts, out: crafts * node.alt.amount, alt: node.alt, depth: depth || 0 });
+      node.alt.res.forEach(([rid, cnt, ret], i) => {
+        expand(node.children[i], buyAmount(cnt, crafts, node.rrr, !!ret)[0], out, (depth || 0) + 1);
+      });
+    }
+    return { cheapest, expand, market };
+  }
+
+  /** Kompletter Plan für ein Produkt (Trank/Essen) mit Stückzahl. */
+  function cheapPlan(gd, store, s, id, pieces, o) {
+    const rec = gd.recipes[id];
+    if (!rec) return null;
+    const solver = makeSolver(gd, store, s, o);
+    const crafts = craftsFor(rec, pieces);
+    const rrr = returnRate(productionBonus(s, o.city, rec.cat, o.focus, o.daily));
+    const ings = rec.res.map(([rid, cnt, ret]) => {
+      const node = solver.cheapest(rid, 0);
+      const qty = buyAmount(cnt, crafts, rrr, !!ret)[0];
+      return { id: rid, cnt, ret: !!ret, node, qty, full: cnt * crafts };
+    });
+    const complete = ings.every((x) => x.node.unit !== null);
+    const prices = {};
+    ings.forEach((x) => { prices[x.id] = x.node.unit; });
+    const best = bestSale(store, s, id, o.sellLocs, o.sellMode, o.maxAge);
+    const res = calcCraft(rec, crafts, rrr, prices, best ? best.price : null, sellFee(s, best ? best.mode : o.sellMode), 0, o.focus);
+    // Einkaufsliste entlang der billigsten Wege
+    const out = { buy: {}, steps: [] };
+    if (complete) ings.forEach((x) => solver.expand(x.node, x.qty, out, 0));
+    let buyCost = complete ? 0 : null;
+    const buyList = Object.entries(out.buy).map(([item, qty]) => {
+      const m = solver.market(item);
+      const cost = m ? qty * m.price : null;
+      if (cost === null) buyCost = null; else if (buyCost !== null) buyCost += cost;
+      return { item, qty, price: m ? m.price : null, cost };
+    }).sort((a, b) => (b.cost || 0) - (a.cost || 0));
+    // Ersparnis gegenüber "alles direkt kaufen"
+    let directCost = 0, directOk = true;
+    ings.forEach((x) => { const m = solver.market(x.id); if (!m) directOk = false; else directCost += m.price * x.qty; });
+    return {
+      id, rec, crafts, pieces: crafts * rec.amount, rrr, ings, res, best, complete: complete && !!best,
+      buyList, steps: out.steps, buyCost, directCost: directOk ? directCost : null, solver,
+      unitCost: complete ? res.cost / (crafts * rec.amount) : null,
+    };
+  }
+
   const Core = {
     API_HOST, ROYAL_CITIES, CITIES, BLACK_MARKET, MARKETS, AUTO_CITY, AUTO_MARKET, SAME_CITY,
     REFINING_CATS, REFINE_TYPES, DEFAULT_SETTINGS,
@@ -653,7 +745,7 @@
     GameData, PriceStore, bonusCityFor, productionBonus, returnRate, focusCost,
     salesTax, sellFee, buyUnitCost, salePrice, bestSale, volumeOk, calcCraft,
     refineTable, needs, refineAmount, refineDetail, simulate, buyAmount, buyPlan, craftsFor,
-    evalCraft, upfrontCost, planSilver,
+    evalCraft, upfrontCost, planSilver, makeSolver, cheapPlan,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = Core;
   else root.Core = Core;

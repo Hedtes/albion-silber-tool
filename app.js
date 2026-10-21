@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const C = window.Core;
-  const VERSION = "1.3.1";
+  const VERSION = "1.3.2";
   const $ = (id) => document.getElementById(id);
   const S = C.fmtSilver;
   const SLOW_DAYS = 7;
@@ -699,9 +699,13 @@
     runJobs([[alchItemsToLoad(variants), [o.buyCity]], [variants, o.sellLocs], [variants, o.sellLocs, "history"]], () => render());
   }
 
-  function aEditPrice(item, loc, kind) {
+  function aEditPrice(item, loc, kind, current) {
     const [cur] = store.get(item, loc, kind);
-    const v = window.prompt(`${gd.label(item)} – ${loc}\nPreis in Silber (leer = Live-Preis):`, cur === null ? "" : String(Math.round(cur)));
+    const e = store.live[item + "|" + loc] || {};
+    const liveTxt = e[kind] ? `Live: ${S(e[kind])} (${C.fmtAge(e[kind + "_ts"])} alt)` : "Live: keiner";
+    const what = kind === "buy" ? "Kaufgebot (Sofortverkauf)" : "Verkaufsangebot";
+    const start = current !== undefined && current !== null ? current : cur;
+    const v = window.prompt(`${gd.label(item)} – ${loc}\n${what} · ${liveTxt}\n\nPreis in Silber (leer = Live-Preis):`, start === null ? "" : String(Math.round(start)));
     if (v === null) return;
     const clean = v.replace(/[.\s]/g, "");
     if (clean === "") store.setManual(item, loc, kind, null);
@@ -724,6 +728,39 @@
       if (ui.aInput === "budget") ui.aBudget = v; else ui.aQty = v;
       saveUi(); renderAlch();
     } } }, l)));
+  }
+
+  function aResetPrice(item, loc, kind) {
+    if (store.isManual(item, loc, kind)) { store.setManual(item, loc, kind, null); setStatus("↺ Wieder Live-Preis"); }
+    else setStatus("Hier ist kein manueller Preis gesetzt");
+    renderAlch();
+  }
+
+  /** Verkaufspreis des Produkts anzeigen und ändern. */
+  function renderAlchSale(id, o, plan) {
+    const box = $("a-sale");
+    box.innerHTML = "";
+    const loc = plan.best ? plan.best.loc : o.sellLocs[0];
+    const mode = plan.best ? plan.best.mode : (loc === C.BLACK_MARKET ? "instant" : o.sellMode);
+    const kind = mode === "instant" ? "buy" : "sell";
+    let [p, src, ts] = store.get(id, loc, kind);
+    if (plan.best && src !== "manuell" && plan.best.price !== p) { p = plan.best.price; src = "Ø-Preis"; ts = null; }
+    const vol = plan.best ? plan.best.info.per_day : null;
+    box.append(el("div", { class: "price", style: "padding:0" },
+      el("div", { class: "t" },
+        el("div", { class: "n" }, "Verkaufspreis " + gd.label(id)),
+        el("div", { class: "small muted" }, `${loc} · ${mode === "instant" ? "Sofortverkauf an Kaufgebot" : "Verkaufsauftrag"}` +
+          ` · Verkäufe/Tag ${vol === null || vol === undefined ? "?" : C.fmtNum(vol, vol < 10 ? 1 : 0)}`),
+        el("div", { class: "small" }, el("span", { class: "src " + (src || "fehlt") }, `${src || "fehlt"}${ts ? " · " + C.fmtAge(ts) : ""}`))),
+      el("div", { class: "v num", style: "font-size:22px" }, S(p)),
+      el("button", { class: "icon-btn", title: "Preis ändern", on: { click: () => {
+        // bei „bester Markt“ den Markt festhalten, damit der eigene Preis auch dort gilt
+        if (ui.aSell === C.AUTO_MARKET) { ui.aSell = loc; saveUi(); }
+        aEditPrice(id, loc, kind, p);
+      } } }, "✎"),
+      el("button", { class: "icon-btn", title: "Live-Preis", on: { click: () => aResetPrice(id, loc, kind) } }, "↺"),
+    ));
+    if (src === "manuell") box.append(el("div", { class: "small", style: "color:var(--manual);margin-top:6px" }, "Eigener Preis aktiv – gilt, bis ein neuerer Live-Preis geladen wird oder du ↺ tippst."));
   }
 
   function renderAlchOpts(o) {
@@ -808,6 +845,8 @@
         `${S(plan.pieces)} × ${gd.label(id)} · Marge ${C.fmtNum(r.margin)} % · Einkauf ${S(plan.buyCost)}`;
     }
 
+    renderAlchSale(id, o, plan);
+
     // Stufenvergleich
     const tbl = $("a-compare");
     tbl.innerHTML = "";
@@ -839,7 +878,9 @@
       ways.append(el("div", { class: "way" },
         el("div", { class: "row", style: "justify-content:space-between;flex-wrap:nowrap;align-items:flex-start" },
           el("b", { style: "flex:1;min-width:0" }, `${S(x.qty)} × ${gd.label(x.id)}`),
-          el("button", { class: "icon-btn", title: "Marktpreis eingeben", on: { click: () => aEditPrice(x.id, o.buyCity, o.buyMode === "instant" ? "sell" : "buy") } }, "✎")),
+          el("div", { class: "row", style: "flex-wrap:nowrap;gap:6px" },
+            el("button", { class: "icon-btn", title: "Marktpreis eingeben", on: { click: () => aEditPrice(x.id, o.buyCity, o.buyMode === "instant" ? "sell" : "buy") } }, "✎"),
+            el("button", { class: "icon-btn", title: "Live-Preis", on: { click: () => aResetPrice(x.id, o.buyCity, o.buyMode === "instant" ? "sell" : "buy") } }, "↺"))),
         el("div", { class: "small " + (n.how === "craft" ? "gold" : "") }, how + (m && n.how === "craft" ? ` (Markt: ${S(m)})` : "")),
         save > 0 ? el("div", { class: "save" }, `Spart ${S(save)} Silber gegenüber Kaufen`) : null,
         describeNode(n, x.qty, plan.solver, 0),
@@ -849,10 +890,17 @@
     // Einkaufsliste
     const bl = $("a-buylist");
     bl.innerHTML = "";
-    plan.buyList.forEach((it) => bl.append(el("div", { class: "shop-item" },
-      el("div", { class: "t" }, el("div", { style: "font-weight:700" }, `${S(it.qty)} × ${gd.label(it.item)}`),
-        el("div", { class: "small muted" }, `${o.buyCity} · ${it.price === null ? "Preis fehlt" : S(it.price) + " pro Stück"}`)),
-      el("div", { class: "num" }, S(it.cost)))));
+    const bkind = o.buyMode === "instant" ? "sell" : "buy";
+    plan.buyList.forEach((it) => {
+      const man = store.isManual(it.item, o.buyCity, bkind);
+      bl.append(el("div", { class: "shop-item" },
+        el("div", { class: "t" }, el("div", { style: "font-weight:700" }, `${S(it.qty)} × ${gd.label(it.item)}`),
+          el("div", { class: "small " + (man ? "" : "muted"), style: man ? "color:var(--manual)" : "" },
+            `${o.buyCity} · ${it.price === null ? "Preis fehlt" : S(it.price) + " pro Stück"}${man ? " · eigener Preis" : ""}`)),
+        el("div", { class: "num" }, S(it.cost)),
+        el("button", { class: "icon-btn", on: { click: () => aEditPrice(it.item, o.buyCity, bkind) } }, "✎"),
+        el("button", { class: "icon-btn", on: { click: () => aResetPrice(it.item, o.buyCity, bkind) } }, "↺")));
+    });
     const sp = plan.directCost !== null && plan.buyCost !== null ? plan.directCost - plan.buyCost : null;
     $("a-buy-info").innerHTML = plan.buyCost === null ? "Noch nicht alle Preise vorhanden." :
       `Einkauf gesamt <b>${S(plan.buyCost)}</b> Silber` + (sp > 0 ? ` · <span class="pos">${S(sp)} günstiger</span> als alle Zutaten direkt zu kaufen (${S(plan.directCost)})` : "");

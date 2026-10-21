@@ -13,7 +13,7 @@
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="icon" type="image/png" href="icons/icon-64.png">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="stylesheet" href="style.css?v=1.7.4">
+<link rel="stylesheet" href="style.css?v=1.8.0">
 </head>
 <body>
 <header class="top">
@@ -29,7 +29,7 @@
       <button data-m="safe">🛡 100 % sicher</button>
       <button data-m="bm">🐎 mit Black Market</button>
     </div>
-    <div class="muted small" id="s-mode-info" style="margin:0 2px 10px"></div>
+    <div class="muted small hint" id="s-mode-info" style="margin:0 2px 10px"></div>
 
     <div class="card qty">
       <label class="t" for="s-budget">DEIN BUDGET · Silber</label>
@@ -54,9 +54,12 @@
           <div class="field"><label>Stadt</label><select id="s-city"></select></div>
           <div class="field"><label>Material kaufen per</label><select id="s-buymode">
             <option value="instant">Sofortkauf (sofort)</option><option value="order">Kaufauftrag (günstiger, dauert)</option></select></div>
+          <div class="field"><label>Verkauf per</label><select id="s-sellmode">
+            <option value="instant">Sofortverkauf (sicher)</option><option value="order">Verkaufsauftrag (mehr, dauert)</option></select></div>
           <div class="field"><label>Mindest-Marge %</label><input id="s-margin" type="number" inputmode="decimal" value="10"></div>
           <div class="field"><label>Menge = Verkäufe von … Tagen</label><input id="s-days" type="number" inputmode="decimal" value="1"></div>
           <div class="field"><label>Max. Preisalter (Stunden)</label><input id="s-age" type="number" inputmode="decimal" value="6"></div>
+          <div class="full"><label class="toggle"><span>✨ Verzaubern mitprüfen (Runen/Seelen/Relikte)</span><input type="checkbox" id="s-enchup"></label></div>
           <div class="full"><label class="toggle"><span>Ganze Kette: Barren/Planken selbst refinen, wenn günstiger <span class="muted small">(★)</span></span><input type="checkbox" id="s-chain"></label></div>
         </div>
       </details>
@@ -68,6 +71,7 @@
     <button class="btn primary block" id="s-shop" style="margin-top:12px;display:none">📝 Ganzen Plan als Rezepte speichern</button>
     <h3 id="s-more-h" style="display:none;margin:20px 2px 8px;font-size:15px">Weitere Gelegenheiten</h3>
     <div class="list" id="s-more"></div>
+    <div class="list" id="s-ench"></div>
   </section>
 
   <!-- ===================================================== Refining -->
@@ -130,7 +134,7 @@
         <b id="ab-title">🏆 Profitabelste Tränke</b>
         <button class="btn primary" id="ab-run">🔍 Suchen</button>
       </div>
-      <div class="small muted" id="ab-hint" style="margin-top:4px">Prüft alle Sorten, Tiers und .0–.3 mit dem billigsten Weg – mit deiner Menge und deinen Städten aus dem Rechner.</div>
+      <div class="small muted hint" id="ab-hint" style="margin-top:4px">Prüft alle Sorten, Tiers und .0–.3 mit dem billigsten Weg – mit deiner Menge und deinen Städten aus dem Rechner.</div>
       <div class="row" style="gap:8px;margin-top:8px;flex-wrap:nowrap">
         <label class="small muted" for="ab-vol" style="flex:1">Mind. Verkäufe/Tag</label>
         <input id="ab-vol" type="number" inputmode="decimal" value="5" style="width:90px;padding:8px;border-radius:9px;border:1px solid var(--line);background:var(--panel2)">
@@ -142,6 +146,7 @@
     <div class="card">
       <input id="a-search" type="search" placeholder="Suchen, z. B. „lebenstrank“ oder „eintopf“" style="width:100%;padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--panel2);font-size:16px">
       <div id="a-results" style="margin-top:8px;max-height:220px;overflow-y:auto"></div>
+      <button class="btn block" id="a-browse" style="display:none">🔍 Andere Sorte wählen</button>
     </div>
 
     <div id="a-calc" style="display:none">
@@ -184,7 +189,7 @@
 
       <div class="card">
         <b>Welche Stufe lohnt sich?</b>
-        <div class="muted small" style="margin:2px 0 6px">Kosten über den billigsten Weg · Tippen wählt die Stufe</div>
+        <div class="muted small hint" style="margin:2px 0 6px">Kosten über den billigsten Weg · Tippen wählt die Stufe</div>
         <table class="res num" id="a-compare"></table>
       </div>
 
@@ -207,7 +212,7 @@
   <!-- ===================================================== Crafting -->
   <section class="view" id="view-craft">
     <details class="card opts" id="es-card">
-      <summary><b>✨ Verzauber-Scan</b> <span class="muted small">– lohnende Verzauberungen finden</span></summary>
+      <summary><b>✨ Verzauber-Scan</b> <span class="muted small hint">– lohnende Verzauberungen finden</span></summary>
       <div class="grid" style="margin-top:8px">
         <div class="field full"><label>Gruppen</label><div class="mini-chips" id="es-groups"></div></div>
         <div class="field full"><label>Tiers</label><div class="mini-chips" id="es-tiers"></div></div>
@@ -233,6 +238,7 @@
         <input id="c-search" type="search" placeholder="Item suchen, z. B. „lebenstrank t4“" style="flex:1;min-width:0;padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--panel2);font-size:16px">
       </div>
       <div class="chips" id="c-groups" style="margin-top:10px"></div>
+      <button class="btn block" id="c-browse" style="display:none">🔍 Anderes Item wählen</button>
       <div id="c-results" style="margin-top:8px;max-height:260px;overflow-y:auto"></div>
     </div>
 
@@ -272,7 +278,7 @@
       <div class="card">
         <div class="row" style="justify-content:space-between"><b>Was du kaufen musst</b>
           <button class="btn" id="c-all-live">↺ Alle auf Live</button></div>
-        <div class="muted small" style="margin:4px 0 2px">Rückgabe wird in weiteren Runden wieder eingesetzt – am Ende bleibt nur ein kleiner Rest (weniger als ein Craft).</div>
+        <div class="muted small hint" style="margin:4px 0 2px">Rückgabe wird in weiteren Runden wieder eingesetzt – am Ende bleibt nur ein kleiner Rest (weniger als ein Craft).</div>
         <div id="c-mats"></div>
       </div>
 
@@ -295,7 +301,7 @@
     <div id="stock-pane" style="display:none">
       <div class="card">
         <b>Dein Lager</b>
-        <div class="muted small" style="margin:2px 0 8px">Was du schon hast, wird in den Rechnern zuerst verbraucht und von der Einkaufsliste abgezogen. „Wert pro Stück“: 0 = selbst gesammelt/gratis, sonst z. B. dein Einkaufspreis.</div>
+        <div class="muted small hint" style="margin:2px 0 8px">Was du schon hast, wird in den Rechnern zuerst verbraucht und von der Einkaufsliste abgezogen. „Wert pro Stück“: 0 = selbst gesammelt/gratis, sonst z. B. dein Einkaufspreis.</div>
         <input id="stock-search" type="search" list="items-dl" placeholder="Item hinzufügen, z. B. „Zinnenklette“" style="width:100%;padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--panel2);font-size:16px">
         <div id="stock-list" style="margin-top:8px"></div>
       </div>
@@ -314,7 +320,7 @@
       <div class="card" id="book-eval">
         <div class="row" style="justify-content:space-between"><b>📊 Auswertung</b>
           <div class="mini-chips" id="eval-range"></div></div>
-        <div class="muted small" style="margin:2px 0 6px">Echter Gewinn aus deinen Verkäufen (Einkauf anteilig zur verkauften Menge)</div>
+        <div class="muted small hint" style="margin:2px 0 6px">Echter Gewinn aus deinen Verkäufen (Einkauf anteilig zur verkauften Menge)</div>
         <div class="tiles" id="eval-tiles" style="margin-bottom:6px"></div>
         <div id="eval-list"></div>
       </div>
@@ -335,14 +341,14 @@
     </div>
     <div id="shop-pane">
     <div class="tiles" id="shop-tiles"></div>
-    <div class="howto">
+    <div class="howto" id="howto">
       <b>So funktioniert's</b>
       <ol>
         <li>Im <b>Crafting</b>- oder <b>Tränke</b>-Rechner unten auf <b>„📝 Rezept speichern“</b> tippen.</li>
         <li>Hier abhaken, was du <b>gekauft</b> hast (✎ = was du wirklich bezahlt hast).</li>
         <li>Nach dem Craften <b>„Fertig – ins Buch“</b> tippen. Dann steht es im Buch und verschwindet hier.</li>
       </ol>
-      <div class="small muted">Mengen und Preise werden beim Speichern festgehalten und ändern sich hier nicht mehr von selbst.</div>
+      <div class="small muted hint">Mengen und Preise werden beim Speichern festgehalten und ändern sich hier nicht mehr von selbst.</div>
     </div>
     <div id="proj-list"></div>
     <div class="card" id="proj-all" style="display:none"></div>
@@ -408,7 +414,7 @@
       <div class="row" style="justify-content:space-between"><b>Preise</b>
         <button class="btn" id="calc-all-live">↺ Alle auf Live</button></div>
       <div id="calc-prices"></div>
-      <div class="muted small">✎ = Preis selbst eintragen · ↺ = wieder Live-Preis</div>
+      <div class="muted small hint">✎ = Preis selbst eintragen · ↺ = wieder Live-Preis</div>
     </div>
     <div class="card">
       <table class="res num" id="calc-table"></table>
@@ -471,7 +477,7 @@
       <div class="qp-x qp-eq">=</div>
       <div class="field"><label>Gesamt (Silber)</label><input id="qp-total" type="number" inputmode="numeric" min="0"></div>
     </div>
-    <div class="small muted" id="qp-hint" style="margin-top:6px">Tipp: Menge und Stückpreis eingeben – oder direkt den Gesamtpreis, dann wird der Stückpreis ausgerechnet.</div>
+    <div class="small muted hint" id="qp-hint" style="margin-top:6px">Tipp: Menge und Stückpreis eingeben – oder direkt den Gesamtpreis, dann wird der Stückpreis ausgerechnet.</div>
     <label class="toggle" id="qp-chk-wrap" style="margin-top:8px"><span id="qp-chk-label"></span><input type="checkbox" id="qp-chk"></label>
     <div class="qp-btns">
       <button class="btn" id="qp-cancel">Abbrechen</button>
@@ -483,7 +489,7 @@
 <div class="toast note" id="note"><span id="note-text"></span><button id="note-btn">Ansehen</button></div>
 <div class="toast" id="toast"><span id="toast-text"></span><button id="toast-btn">Neu laden</button></div>
 
-<script src="core.js?v=1.7.4"></script>
-<script src="app.js?v=1.7.4"></script>
+<script src="core.js?v=1.8.0"></script>
+<script src="app.js?v=1.8.0"></script>
 </body>
 </html>

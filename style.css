@@ -268,3 +268,24 @@ table.res tr.key td.pos { color: var(--pos); } table.res tr.key td.neg { color: 
 .qp-btns { display: flex; gap: 8px; margin-top: 12px; }
 .qp-btns .btn { flex: 1; padding: 12px 8px; }
 .qp-btns .btn.primary { flex: 1.4; }
+details.why { margin-top: 6px; font-size: 12.5px; }
+details.why summary { color: var(--gold-lt); cursor: pointer; }
+
+/* ---------- Aufgeräumte Ansicht */
+body.no-hints .hint { display: none !important; }
+@media (max-width: 600px) {
+  .card { padding: 12px; margin-bottom: 10px; }
+  .tiles { gap: 8px; margin-bottom: 10px; }
+  .tile { padding: 8px 10px; }
+  .tile .v { font-size: 17px; }
+  .tile .l { font-size: 11px; }
+  #tiles .tile:nth-child(n+3) { display: none; }       /* Refining: nur die 2 wichtigsten Kacheln */
+  .stage { padding: 10px 12px; }
+  .stage .facts > div:nth-child(n+4) { display: none; } /* nur 3 Werte pro Karte – Details im Rechner */
+  .stage .where { margin-bottom: 6px; }
+  .proj-sec { margin-top: 10px; }
+  .chk { padding: 8px 0; }
+  .shop-item { padding: 8px 0; }
+  .quick button { padding: 7px 4px; }
+  h3 { font-size: 14px; }
+}

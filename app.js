@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const C = window.Core;
-  const VERSION = "1.7.4";
+  const VERSION = "1.8.0";
   const $ = (id) => document.getElementById(id);
   const S = C.fmtSilver;
   const SLOW_DAYS = 7;
@@ -31,9 +31,14 @@
     aKind: "potion", aBase: "T4_POTION_HEAL", aEnch: 0, aQty: 100, aInput: "qty", aBudget: 1000000, aCity: C.AUTO_CITY, aBuy: C.SAME_CITY,
     aSell: C.AUTO_MARKET, aSellMode: "order", aBuyMode: "instant", aDaily: 0, aFocus: false,
     sMode: "safe", sBudget: 1000000, sFocus: 0, sFce: 0, sCity: "auto", sBuyMode: "instant", sChain: true,
-    sMargin: 10, sDays: 1, sAge: 6, sGroups: ["Refining", "Tränke", "Essen"], sTiers: [4, 5, 6], sEnchs: [0, 1, 2],
+    sMargin: 5, sDays: 1, sAge: 12, sGroups: ["Refining", "Tränke", "Essen", "Taschen & Umhänge", "Werkzeuge", "Sammlerausrüstung"], sTiers: [4, 5, 6, 7], sEnchs: [0, 1, 2, 3], sSellMode: "instant", sEnchUp: true,
   }, storage.get("ui", {}));
   const saveUi = () => storage.set("ui", ui);
+  if (!ui.sV2) {   // Silber-Finder: einmalig auf die breiteren neuen Standardwerte setzen
+    Object.assign(ui, { sV2: true, sMargin: 5, sAge: 12, sSellMode: "instant", sEnchUp: true,
+      sGroups: ["Refining", "Tränke", "Essen", "Taschen & Umhänge", "Werkzeuge", "Sammlerausrüstung"], sTiers: [4, 5, 6, 7], sEnchs: [0, 1, 2, 3] });
+    saveUi();
+  }
   let shop = storage.get("shop", []);
   const saveShop = () => storage.set("shop", shop);
 
@@ -485,10 +490,12 @@
 
   // ------------------------------------------------------------ Silber-Finder
   const S_GROUPS = ["Refining", "Tränke", "Essen", "Waffen", "Rüstung", "Nebenhand", "Taschen & Umhänge", "Sammlerausrüstung", "Werkzeuge"];
+  const ALCH_GROUPS = ["Tränke", "Essen"];
   let silver = null; // letztes Ergebnis
 
   function sCities() {
-    const pool = ui.sMode === "bm" ? C.ROYAL_CITIES.concat(["Caerleon"]) : C.ROYAL_CITIES;
+    // Brecilien gehört dazu (Bonusstadt für Tränke, Taschen, Umhänge); Caerleon nur im Black-Market-Modus
+    const pool = C.ROYAL_CITIES.concat(["Brecilien"], ui.sMode === "bm" ? ["Caerleon"] : []);
     return ui.sCity === "auto" ? pool : [ui.sCity];
   }
   function sIds() {
@@ -498,32 +505,58 @@
     });
   }
   function sOpts() {
-    return { maxAge: Number(ui.sAge) || 6, daily: 0, fce: Number(ui.sFce) || 0, chain: ui.sChain, buyMode: ui.sBuyMode, sellMode: "instant" };
+    return { maxAge: Number(ui.sAge) || 6, daily: 0, fce: Number(ui.sFce) || 0, chain: ui.sChain, buyMode: ui.sBuyMode,
+      sellMode: ui.sSellMode || "instant" };
   }
 
-  /** Alle Items bewerten: pro Item beste Stadt ohne und mit Fokus. */
-  function silverEvaluate(ids) {
+  /** Tränke/Essen über den billigsten Weg (Extrakt aus Überresten, Fischsauce …) bewerten – liefert ein evalCraft-ähnliches Objekt. */
+  function evalAlch(id, base) {
+    const rec = gd.recipes[id];
+    const o = { city: base.city, buyCity: base.buyCity, buyMode: base.buyMode, maxAge: base.maxAge, alts: alchData.alts,
+      focus: base.focus, daily: 0, sellLocs: base.sellLocs, sellMode: base.sellMode, stock: {} };
+    const plan = C.cheapPlan(gd, store, settings, id, rec.amount, o);
+    if (!plan || !plan.complete) return null;
+    const prices = {}, selfMade = [];
+    plan.ings.forEach((x) => { prices[x.id] = x.node.unit; if (x.node.how === "craft") selfMade.push(x.id); });
+    return { id, rec, city: base.city, buyCity: base.buyCity, buyMode: base.buyMode, focus: !!base.focus, rrr: plan.rrr, prices, selfMade,
+      sellLoc: plan.best.loc, sellMode: plan.best.mode, sellPrice: plan.best.price, per_day: plan.best.info.per_day,
+      profit: plan.res.profit, cost: plan.res.cost, margin: plan.res.margin, revenue: plan.res.revenue,
+      focusCost: base.focus ? C.focusCost(rec.focus, base.fce) : 0, alch: true };
+  }
+
+  /** Alle Items bewerten: pro Item beste Stadt ohne und mit Fokus. stats zählt, warum etwas rausfällt. */
+  function silverEvaluate(ids, stats) {
     const o = sOpts();
     const minM = Number(ui.sMargin) || 0;
     const withFocus = (Number(ui.sFocus) || 0) > 0;
     const items = [];
     const memos = {};
+    const st = stats || {};
+    Object.assign(st, { noPrice: 0, loss: 0, lowMargin: 0, ok: 0 });
     for (const id of ids) {
-      let bestNf = null, bestF = null;
+      let bestNf = null, bestF = null, anyPrice = false, anyProfit = false;
+      const isAlch = ALCH_GROUPS.includes(gd.recipes[id].group);
       for (const city of sCities()) {
         const memo = (memos[city] = memos[city] || {});
         // Der Black Market kauft nur Ausrüstung – Ressourcen, Tränke und Essen bleiben in der Stadt
         const bmOk = ui.sMode === "bm" && !["Refining", "Tränke", "Essen"].includes(gd.recipes[id].group);
         const sellLocs = bmOk ? [city, C.BLACK_MARKET] : [city];
         const base = Object.assign({}, o, { city, buyCity: city, sellLocs, memo });
-        const nf = C.evalCraft(gd, store, settings, id, Object.assign({}, base, { focus: false }));
+        const ev = (focus) => isAlch ? evalAlch(id, Object.assign({}, base, { focus }))
+          : C.evalCraft(gd, store, settings, id, Object.assign({}, base, { focus }));
+        const nf = ev(false);
+        if (nf) { anyPrice = true; if (nf.profit > 0) anyProfit = true; }
         if (nf && nf.margin >= minM && (!bestNf || nf.profit > bestNf.profit)) bestNf = nf;
         if (withFocus) {
-          const f = C.evalCraft(gd, store, settings, id, Object.assign({}, base, { focus: true }));
+          const f = ev(true);
+          if (f) { anyPrice = true; if (f.profit > 0) anyProfit = true; }
           if (f && f.margin >= minM && (!bestF || f.profit / Math.max(1, f.focusCost) > bestF.profit / Math.max(1, bestF.focusCost))) bestF = f;
         }
       }
-      if (bestNf || bestF) items.push({ id, nf: bestNf, f: bestF });
+      if (bestNf || bestF) { items.push({ id, nf: bestNf, f: bestF }); st.ok++; }
+      else if (!anyPrice) st.noPrice++;
+      else if (!anyProfit) st.loss++;
+      else st.lowMargin++;
     }
     return items;
   }
@@ -531,7 +564,7 @@
   function runSilver() {
     if (!ui.sGroups.length || !ui.sTiers.length || !ui.sEnchs.length) { setStatus("Bitte Gruppen, Tiers und Verzauberung wählen.", true); return; }
     const ids = sIds();
-    if (ids.length > 4000 && !confirm(`${ids.length} Rezepte – das dauert etwas. Starten?`)) return;
+    if (ids.length > 6000 && !confirm(`${ids.length} Rezepte – das dauert etwas. Starten?`)) return;
     const mats = new Set();
     const addMats = (id, depth) => {
       const r = gd.recipes[id]; if (!r || depth > 8) return;
@@ -542,19 +575,68 @@
       }
     };
     ids.forEach((id) => addMats(id, 0));
+    // Tränke/Essen: auch alle Wege (Tierteile, Fische, Überreste …) laden
+    const alchIds = ids.filter((id) => ALCH_GROUPS.includes(gd.recipes[id].group));
+    if (alchIds.length) alchItemsToLoad(alchIds).forEach((x) => mats.add(x));
+    // Verzaubern: Runen/Seelen/Relikte + höhere Stufen der Ausrüstung
+    const ench = esForSilver();
     const locs = sCities().concat(ui.sMode === "bm" ? [C.BLACK_MARKET] : []);
-    runJobs([[[...new Set(ids.concat([...mats]))], locs]], async () => {
+    runJobs([[[...new Set(ids.concat([...mats], ench.ids))], locs]], async () => {
       // Verkaufszahlen nur für Items mit Gewinn laden
       const items = silverEvaluate(ids);
       const hist = {};
       for (const x of items) for (const ev of [x.nf, x.f]) if (ev && ev.profit > 0) (hist[ev.sellLoc] = hist[ev.sellLoc] || new Set()).add(ev.id);
+      esSilverEval().slice(0, 20).forEach((x) => (hist[x.sale.loc] = hist[x.sale.loc] || new Set()).add(x.dst));
       const jobs = Object.entries(hist).map(([loc, set]) => [[...set], [loc], "history"]);
       if (jobs.length) { busy = false; await runJobs(jobs, () => finishSilver(ids)); } else finishSilver(ids);
     });
   }
 
+  /** Verzauberungen passend zu den gewählten Gruppen/Tiers (nur Ausrüstung). */
+  function esForSilver() {
+    if (!ui.sEnchUp) return { bases: [], ids: [] };
+    const bases = Object.keys(enchData.c).filter((b) => { const r = gd.recipes[b]; return r && ui.sGroups.includes(r.group) && ui.sTiers.includes(r.tier); });
+    const ids = new Set();
+    for (const b of bases) for (const f of [0, 1, 2]) {
+      if (!ui.sEnchs.includes(f)) continue;
+      ids.add(enchId(b, f)); ids.add(enchId(b, f + 1)); ids.add(`T${gd.recipes[b].tier}_${ENCH_MAT[f]}`);
+    }
+    return { bases, ids: [...ids] };
+  }
+  function esSilverEval() {
+    const { bases } = esForSilver();
+    if (!bases.length) return [];
+    const age = Number(ui.sAge) || 6;
+    const unit = (item, loc) => {
+      const [p, src] = store.get(item, loc, ui.sBuyMode === "instant" ? "sell" : "buy", age);
+      return (p !== null && src !== "alt") || src === "manuell" ? C.buyUnitCost(settings, p, ui.sBuyMode) : null;
+    };
+    const out = [];
+    for (const b of bases) {
+      const r = gd.recipes[b], n = enchData.c[b];
+      for (const from of [0, 1, 2]) {
+        if (!ui.sEnchs.includes(from)) continue;
+        const src = enchId(b, from), dst = enchId(b, from + 1), mat = `T${r.tier}_${ENCH_MAT[from]}`;
+        let best = null;
+        for (const c of sCities()) {
+          const ip = unit(src, c), mp = unit(mat, c);
+          if (ip === null || mp === null) continue;
+          const locs = ui.sMode === "bm" ? [c, C.BLACK_MARKET] : [c];
+          const sale = C.bestSale(store, settings, dst, locs, ui.sSellMode || "instant", age);
+          if (!sale) continue;
+          const cost = ip + n * mp, profit = sale.price * (1 - C.sellFee(settings, sale.mode)) - cost;
+          if (!best || profit > best.profit) best = { base: b, from, to: from + 1, src, dst, mat, n, buyCity: c, ip, mp, cost, sale, profit,
+            margin: cost ? profit / cost * 100 : 0, vol: sale.info ? sale.info.per_day : null };
+        }
+        if (best && best.profit > 0 && best.margin >= (Number(ui.sMargin) || 0)) out.push(best);
+      }
+    }
+    return out.sort((a, b) => b.profit - a.profit);
+  }
+
   function finishSilver(ids) {
-    const items = silverEvaluate(ids);
+    const stats = {};
+    const items = silverEvaluate(ids, stats);
     const res = C.planSilver(items, {
       budget: Number(ui.sBudget) || 0, focus: Number(ui.sFocus) || 0, days: Number(ui.sDays) || 1, unknownCap: 0,
     });
@@ -562,7 +644,9 @@
     const more = items.filter((x) => !usedIds.has(x.id)).map((x) => x.nf || x.f).filter((ev) => ev && ev.profit > 0)
       .map((ev) => ({ ev, perDay: ev.per_day ? ev.profit * Math.floor(ev.per_day / ev.rec.amount) : null }))
       .sort((a, b) => (b.perDay || 0) - (a.perDay || 0)).slice(0, 20);
-    silver = { plan: res.plan, more, budgetLeft: res.budgetLeft, focusLeft: res.focusLeft, checked: ids.length, found: items.length, at: Date.now() };
+    stats.noVolume = items.filter((x) => { const ev = x.nf || x.f; return ev && (ev.per_day === null || ev.per_day === undefined); }).length;
+    const ench = esSilverEval().slice(0, 10);
+    silver = { plan: res.plan, more, ench, stats, budgetLeft: res.budgetLeft, focusLeft: res.focusLeft, checked: ids.length, found: items.length, at: Date.now() };
     storage.set("silver", null);
     renderSilver();
   }
@@ -570,8 +654,8 @@
   function renderSilverOpts() {
     [...$("s-mode").children].forEach((b) => b.classList.toggle("on", b.dataset.m === ui.sMode));
     $("s-mode-info").innerHTML = ui.sMode === "safe"
-      ? "Alles in <b>einer Royal City</b>: Material kaufen, craften und sofort an Kaufgebote verkaufen. Kein Transport durch rote Zonen, kein Warten auf Käufer."
-      : "Ausrüstung wird sofort an den <b>Black Market</b> (Caerleon) verkauft. Höhere Preise, aber Transport durch <b>rote Zone</b> – außer du craftest direkt in Caerleon.";
+      ? "Alles in <b>einer Stadt</b>: kaufen, craften, verkaufen. Kein Transport."
+      : "Ausrüstung an den <b>Black Market</b> (Caerleon). Mehr Gewinn, aber Transport durch die <b>rote Zone</b>.";
     const mini = (box, values, list, label) => {
       box.innerHTML = "";
       values.forEach((v) => box.append(el("button", {
@@ -580,17 +664,20 @@
       }, label(v))));
     };
     mini($("s-groups"), S_GROUPS, ui.sGroups, (g) => g);
+    $("s-groups").append(el("button", { on: { click: () => { ui.sGroups.splice(0, ui.sGroups.length, ...(ui.sGroups.length === S_GROUPS.length ? ["Refining", "Tränke", "Essen"] : S_GROUPS)); saveUi(); renderSilverOpts(); } } },
+      ui.sGroups.length === S_GROUPS.length ? "↺ nur Basis" : "✔ alle"));
     mini($("s-tiers"), TIERS, ui.sTiers, (t) => "T" + t);
     mini($("s-enchs"), ENCHS, ui.sEnchs, (e) => "." + e);
     const sel = $("s-city");
     sel.innerHTML = "";
-    const pool = ui.sMode === "bm" ? C.ROYAL_CITIES.concat(["Caerleon"]) : C.ROYAL_CITIES;
+    const pool = C.ROYAL_CITIES.concat(["Brecilien"], ui.sMode === "bm" ? ["Caerleon"] : []);
     if (ui.sCity !== "auto" && !pool.includes(ui.sCity)) ui.sCity = "auto";
     sel.append(el("option", { value: "auto", textContent: "Beste Stadt je Item" }));
     pool.forEach((c) => sel.append(el("option", { value: c, textContent: c })));
     sel.value = ui.sCity;
     $("s-buymode").value = ui.sBuyMode; $("s-margin").value = ui.sMargin; $("s-days").value = ui.sDays;
     $("s-age").value = ui.sAge; $("s-chain").checked = ui.sChain;
+    $("s-sellmode").value = ui.sSellMode || "instant"; $("s-enchup").checked = ui.sEnchUp !== false;
     if (document.activeElement !== $("s-budget")) $("s-budget").value = ui.sBudget;
     $("s-focus").value = ui.sFocus; $("s-fce").value = ui.sFce;
     let n = 0;
@@ -641,8 +728,12 @@
       ui.sMode === "bm" ? tile(S(carried), "Warenwert im Transport 🐎", carried ? "bad" : "") : tile(S(focus), "Fokus verbraucht"),
     );
     const age = Math.round((Date.now() - silver.at) / 60000);
-    $("s-info").textContent = `${silver.checked} Rezepte geprüft · ${silver.found} erfüllen die Regeln · Plan mit ${P.length} Items` +
-      ` · Stand vor ${age} min · Tippen öffnet den Rechner`;
+    const st = silver.stats || {};
+    $("s-info").innerHTML = `<b>${silver.checked}</b> geprüft · <b class="pos">${silver.found}</b> mit Gewinn · Plan: ${P.length} · vor ${age} min` +
+      (st.noPrice || st.loss || st.lowMargin || st.noVolume ? `<details class="why"><summary>Warum nicht mehr?</summary>` +
+        `${S(st.noPrice || 0)} ohne aktuelle Preise (älter als ${ui.sAge} Std.) · ${S(st.loss || 0)} machen Verlust · ` +
+        `${S(st.lowMargin || 0)} unter ${ui.sMargin} % Marge · ${S(st.noVolume || 0)} ohne Verkaufszahlen (nicht im Plan, aber unten gelistet)` +
+        `<br>Mehr finden: alle Gruppen wählen, Preisalter erhöhen, Marge senken, „Verkaufsauftrag“ statt Sofortverkauf oder Fokus eintragen.</details>` : "");
     if (!P.length) {
       plan.append(el("div", { class: "empty" }, "Gerade nichts, das alle Sicherheitsregeln erfüllt. Tipp: Mindest-Marge senken, mehr Gruppen/Tiers wählen, „Ganze Kette“ einschalten oder Fokus eintragen."));
     }
@@ -652,10 +743,32 @@
       $("s-more-h").style.display = "";
       silver.more.forEach((m) => more.append(silverCard(m, false)));
     }
+    const eb = $("s-ench");
+    eb.innerHTML = "";
+    if (silver.ench && silver.ench.length) {
+      eb.append(el("h3", { style: "margin:20px 2px 8px;font-size:15px" }, "✨ Verzaubern lohnt sich"));
+      silver.ench.forEach((x) => {
+        const t = (l) => `T${gd.recipes[x.base].tier}.${l}`;
+        eb.append(el("div", { class: "stage good", on: { click: () => {
+          Object.assign(ui, { eSrc: "buy", cBuy: x.buyCity, cSell: x.sale.loc === x.buyCity ? C.SAME_CITY : x.sale.loc, cSellMode: ui.sSellMode || "instant",
+            cBuyMode: ui.sBuyMode, cItem: x.src, cQty: 1, cGroup: gd.recipes[x.src].group });
+          saveUi(); show("craft");
+          setTimeout(() => { const c = $("c-ench"); c && c.scrollIntoView({ behavior: "smooth", block: "start" }); }, 400);
+        } } },
+          el("div", { class: "h" }, el("div", { class: "name" }, `${gd.name(x.base)} ${t(x.from)} → ${t(x.to)}`), el("div", { class: "profit num pos" }, `+${S(x.profit)}/Stk`)),
+          el("div", { class: "where" }, `Kaufen in ${x.buyCity} (${S(x.ip)}) + ${S(x.n)} × ${gd.name(x.mat)} à ${S(x.mp)} → Verkauf ${x.sale.loc === C.BLACK_MARKET ? "Black Market" : x.sale.loc} ${S(x.sale.price)}`),
+          el("div", { class: "small muted" }, `Marge ${C.fmtNum(x.margin)} % · ${x.vol == null ? "Verkäufe/Tag ?" : C.fmtNum(x.vol, x.vol < 10 ? 1 : 0) + " Verkäufe/Tag"}`)));
+      });
+    }
   }
 
   function openInCraft(p) {
     const ev = p.ev;
+    if (ev.alch) {
+      Object.assign(ui, { aKind: ev.rec.cat === "food" ? "food" : "potion", aBase: ev.id.split("@")[0], aEnch: ev.rec.ench, aInput: "qty",
+        aQty: p.pieces || ev.rec.amount, aCity: ev.city, aBuy: C.SAME_CITY, aBuyMode: ev.buyMode, aSell: ev.sellLoc, aSellMode: ev.sellMode, aFocus: ev.focus });
+      saveUi(); show("alch"); return;
+    }
     Object.assign(ui, {
       cItem: ev.id, cQty: p.pieces || ev.rec.amount * Math.max(1, Math.floor((ev.per_day || ev.rec.amount) / ev.rec.amount)),
       cCity: ev.city, cBuy: C.SAME_CITY, cBuyMode: ev.buyMode, cSell: ev.sellLoc, cSellMode: ev.sellMode,
@@ -667,8 +780,19 @@
 
   function silverToShop() {
     if (!silver || !silver.plan.length) return;
-    addToShop(silver.plan.map((p) => ({ id: p.ev.id, crafts: p.crafts, city: p.ev.city, buy_city: p.ev.buyCity,
+    for (const p of silver.plan.filter((q) => q.ev.alch)) {
+      const ev = p.ev;
+      const o = { city: ev.city, buyCity: ev.buyCity, buyMode: ev.buyMode, maxAge: settings.max_age_hours, alts: alchData.alts, focus: ev.focus,
+        daily: 0, sellLocs: [ev.sellLoc], sellMode: ev.sellMode, stock };
+      const plan = C.cheapPlan(gd, store, settings, ev.id, p.pieces, o);
+      projects.push(projectFromAlch(ev.id, o, plan));
+    }
+    saveProjects();
+    const rest = silver.plan.filter((q) => !q.ev.alch);
+    if (!rest.length) { note(`📝 ${silver.plan.length} Rezepte gespeichert`); return; }
+    addToShop(rest.map((p) => ({ id: p.ev.id, crafts: p.crafts, city: p.ev.city, buy_city: p.ev.buyCity,
       buy_mode: p.ev.buyMode, focus: p.ev.focus, daily: 0, sell_loc: p.ev.sellLoc, sell_mode: p.ev.sellMode })), "Silber-Finder");
+    note(`📝 ${silver.plan.length} Rezepte gespeichert`);
       }
 
   // ------------------------------------------------------------ Tränke & Essen (billigster Weg)
@@ -711,6 +835,12 @@
   }
 
   function renderAlchSearch() {
+    {
+      const open = aBrowse || !ui.aBase || $("a-search").value.trim() !== "";
+      $("a-results").style.display = open ? "" : "none";
+      $("a-browse").style.display = open ? "none" : "";
+      $("a-search").style.display = open ? "" : "none";
+    }
     [...$("a-kind").children].forEach((b) => b.classList.toggle("on", b.dataset.k === (ui.aKind || "potion")));
     const words = $("a-search").value.toLowerCase().split(/\s+/).filter(Boolean);
     const ids = Object.keys(gd.recipes).filter((id) => {
@@ -723,7 +853,7 @@
     box.innerHTML = "";
     ids.slice(0, 80).forEach((id) => box.append(el("div", {
       class: "shop-item", style: "cursor:pointer" + (id === ui.aBase ? ";color:var(--gold)" : ""),
-      on: { click: () => { ui.aBase = id; ui.aEnch = 0; saveUi(); renderAlchSearch(); renderAlch(); loadAlch(); $("a-calc").scrollIntoView({ behavior: "smooth" }); } },
+      on: { click: () => { ui.aBase = id; ui.aEnch = 0; saveUi(); aBrowse = false; $("a-search").value = ""; renderAlchSearch(); renderAlch(); loadAlch(); $("a-calc").scrollIntoView({ behavior: "smooth" }); } },
     }, el("div", { class: "t", style: "font-weight:600" }, gd.label(id)),
       el("div", { class: "small muted" }, `${gd.recipes[id].amount} Stk/Craft · bis .${aVariants(id).length - 1}`))));
     if (!ids.length) box.append(el("div", { class: "empty" }, "Nichts gefunden"));
@@ -855,7 +985,7 @@
       h += `<br>Du brauchst <b>${S(focusNeed)} Fokus</b> (ohne Fokus-Effizienz).`;
       if (nfCrafts < crafts) h += `<div class="neg" style="margin-top:4px">⚠ Craftest du <b>ohne Fokus</b> oder in einer anderen Stadt, reicht das Material nur für ca. <b>${S(nfCrafts * amount)}</b> statt ${S(crafts * amount)} Stück.</div>`;
     }
-    h += `<div class="muted" style="margin-top:4px">Die Rückgabe der letzten Runde bleibt immer übrig (weniger als 1 Craft) – leg sie ins 📦 Lager, dann wird sie beim nächsten Mal mitgerechnet.</div></div>`;
+    h += `<div class="muted hint" style="margin-top:4px">Die Rückgabe der letzten Runde bleibt immer übrig (weniger als 1 Craft) – leg sie ins 📦 Lager, dann wird sie beim nächsten Mal mitgerechnet.</div></div>`;
     return h;
   }
 
@@ -965,7 +1095,7 @@
       (plan.buyCost === null ? "Noch nicht alle Preise vorhanden." :
       `Einkauf gesamt <b>${S(plan.buyCost)}</b> Silber` + (plan.stockValue ? ` · aus dem Lager: Wert ${S(plan.stockValue)}` : "") +
       (sp > 0 ? ` · <span class="pos">${S(sp)} günstiger</span> als alle Zutaten direkt zu kaufen (${S(plan.directCost)})` : "") +
-      `<br>📦 = ins Lager · 📑 = als Kaufauftrag merken`);
+      `<span class="hint"><br>📦 = ins Lager · 📑 = als Kaufauftrag merken</span>`);
     renderAlch.text = `Einkauf für ${S(plan.pieces)} × ${gd.label(id)} (${o.buyCity})\n\n` +
       plan.buyList.map((it) => `${S(it.qty)} × ${gd.label(it.item)}${it.cost !== null ? " – " + S(it.cost) : ""}`).join("\n") +
       (plan.steps.length ? "\n\nSchritte:\n" + plan.steps.slice().reverse().map((s) => `${S(s.out)} × ${gd.label(s.item)}`).join("\n") : "") +
@@ -1019,8 +1149,13 @@
       sellLoc: best ? best.loc : sellLocs[0] };
   }
 
+  let cBrowse = false, aBrowse = false;
   function renderCraftSearch() {
     const g = $("c-groups");
+    const open = cBrowse || !ui.cItem || $("c-search").value.trim() !== "";
+    g.style.display = open ? "" : "none"; $("c-results").style.display = open ? "" : "none";
+    $("c-browse").style.display = open ? "none" : "";
+    $("c-search").style.display = open ? "" : "none";
     g.innerHTML = "";
     ["Alle"].concat(GROUPS).forEach((name) => g.append(el("button", {
       class: "chip" + ((ui.cGroup || "Tränke") === name ? " on" : ""),
@@ -1039,7 +1174,7 @@
   }
 
   function selectCraft(id) {
-    ui.cItem = id; saveUi();
+    ui.cItem = id; saveUi(); cBrowse = false; $("c-search").value = "";
     renderCraftSearch(); renderCraft();
     $("c-calc").scrollIntoView({ behavior: "smooth", block: "start" });
     const r = gd.recipes[id];
@@ -1376,7 +1511,7 @@
         el("div", {}, el("b", {}, `${S(p.crafts)} Crafts → ${S(p.pieces)} × ${gd.label(p.id)}`), ` in ${p.city}`),
         el("div", { class: "small" }, `Einkauf gesamt ${S(buys.reduce((a, m) => a + (matCost(m) || 0), 0))} · schon ausgegeben ${S(spent)}`),
         el("div", { class: "small" }, `Verkauf geplant: ${p.sellLoc}${p.price ? " · ca. " + S(p.price) + " pro Stück" : ""}`),
-        el("div", { class: "small muted" }, "Am Ende bleibt die Rückgabe der letzten Runde übrig (unter 1 Craft) – ab ins 📦 Lager."),
+        el("div", { class: "small muted hint" }, "Am Ende bleibt die Rückgabe der letzten Runde übrig (unter 1 Craft) – ab ins 📦 Lager."),
         p.profit !== null ? el("div", { class: "small" }, "Erwarteter Gewinn: ",
           el("b", { class: p.profit > 0 ? "pos" : "neg" }, `${p.profit > 0 ? "+" : ""}${S(p.profit)} Silber`)) : null),
       el("div", { class: "proj-btns" },
@@ -1394,6 +1529,7 @@
     if (!projects.length) box.append(el("div", { class: "card empty" }, "Noch keine Rezepte gespeichert.",
       el("div", { class: "small", style: "margin-top:6px" }, "Im Crafting- oder Tränke-Rechner unten auf „📝 Rezept speichern“ tippen.")));
     projects.forEach((p) => box.append(projectCard(p)));
+    $("howto").style.display = projects.length && !ui.hints ? "none" : "";
     // Alles zusammen (nur wenn mehrere Rezepte)
     const agg = {};
     projects.forEach((p) => toBuy(p).filter((m) => !m.done).forEach((m) => {
@@ -2312,8 +2448,11 @@
         g.append(el("div", { class: "field" }, el("label", {}, label), inp));
       }
     }
+    const hb = el("input", { type: "checkbox", checked: !!ui.hints, on: { change: () => { ui.hints = hb.checked; saveUi(); applyHints(); } } });
+    g.prepend(el("label", { class: "toggle full" }, el("span", {}, "Erklärtexte anzeigen ", el("span", { class: "muted small" }, "(aus = aufgeräumte Ansicht)")), hb));
     $("app-version").textContent = VERSION;
   }
+  function applyHints() { document.body.classList.toggle("no-hints", !ui.hints); }
   function saveSettings() { storage.set("settings", settings); render(); }
 
   // ------------------------------------------------------------ Navigation
@@ -2463,7 +2602,7 @@
       saveUi(); renderSilverOpts();
     });
     sbind("s-focus", "sFocus", true); sbind("s-fce", "sFce", true); sbind("s-city", "sCity"); sbind("s-buymode", "sBuyMode");
-    sbind("s-margin", "sMargin", true); sbind("s-days", "sDays", true); sbind("s-age", "sAge", true); sbind("s-chain", "sChain");
+    sbind("s-margin", "sMargin", true); sbind("s-days", "sDays", true); sbind("s-age", "sAge", true); sbind("s-chain", "sChain"); sbind("s-sellmode", "sSellMode"); sbind("s-enchup", "sEnchUp");
     $("s-run").addEventListener("click", runSilver);
     $("s-shop").addEventListener("click", silverToShop);
 
@@ -2472,6 +2611,8 @@
     $("es-run").addEventListener("click", esRun);
     [["es-route", "esRoute"], ["es-sellmode", "esSellMode"], ["es-vol", "esVol"], ["es-age", "esAge"], ["es-min", "esMin"]].forEach(([id, key]) =>
       $(id).addEventListener("change", (e) => { ui[key] = e.target.type === "number" ? Number(e.target.value) || 0 : e.target.value; saveUi(); esRender(); }));
+    $("c-browse").addEventListener("click", () => { cBrowse = true; renderCraftSearch(); $("c-search").focus(); });
+    $("a-browse").addEventListener("click", () => { aBrowse = true; renderAlchSearch(); $("a-search").focus(); });
     $("c-search").addEventListener("input", () => { clearTimeout(st); st = setTimeout(renderCraftSearch, 150); });
     const cq = $("c-qty");
     let qt = null;
@@ -2539,6 +2680,7 @@
 
   // ------------------------------------------------------------ Start
   async function start() {
+    applyHints();
     wire(); qpWire();
     try {
       const [res, al, jr, en] = await Promise.all([fetch("data/recipes_all.json"), fetch("data/alchemy.json"), fetch("data/journals.json"), fetch("data/enchant.json")]);

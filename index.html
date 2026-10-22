@@ -13,7 +13,7 @@
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="icon" type="image/png" href="icons/icon-64.png">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="stylesheet" href="style.css?v=1.8.2">
+<link rel="stylesheet" href="style.css?v=1.8.3">
 </head>
 <body>
 <header class="top">
@@ -162,6 +162,11 @@
         <input class="big num" id="a-qty" type="number" inputmode="numeric" min="1" step="1" value="100">
         <div class="small" style="color:var(--gold-lt);margin-top:6px" id="a-crafts-info"></div>
         <div class="quick" id="a-quick"></div>
+        <div class="seg fseg" id="a-fseg" style="margin-top:10px">
+          <button data-f="0">Ohne Fokus</button>
+          <button data-f="1">✦ Mit Fokus</button>
+        </div>
+        <div class="small" id="a-finfo" style="margin-top:4px"></div>
         <button class="btn primary block" id="a-load" style="margin-top:12px">⟳  Live-Preise laden</button>
         <div class="progress"><div></div></div>
         <div class="status"></div>
@@ -252,6 +257,11 @@
         <input class="big num" id="c-qty" type="number" inputmode="numeric" min="1" step="1" value="100">
         <div class="small" style="color:var(--gold-lt);margin-top:6px" id="c-crafts-info"></div>
         <div class="quick" id="c-quick"></div>
+        <div class="seg fseg" id="c-fseg" style="margin-top:10px">
+          <button data-f="0">Ohne Fokus</button>
+          <button data-f="1">✦ Mit Fokus</button>
+        </div>
+        <div class="small" id="c-finfo" style="margin-top:4px"></div>
         <button class="btn primary block" id="c-load" style="margin-top:12px">⟳  Live-Preise laden</button>
         <div class="progress"><div></div></div>
         <div class="status"></div>
@@ -492,7 +502,7 @@
 <div class="toast note" id="note"><span id="note-text"></span><button id="note-btn">Ansehen</button></div>
 <div class="toast" id="toast"><span id="toast-text"></span><button id="toast-btn">Neu laden</button></div>
 
-<script src="core.js?v=1.8.2"></script>
-<script src="app.js?v=1.8.2"></script>
+<script src="core.js?v=1.8.3"></script>
+<script src="app.js?v=1.8.3"></script>
 </body>
 </html>

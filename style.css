@@ -292,3 +292,5 @@ body.no-hints .hint { display: none !important; }
 
 .quick.mini { margin-top: 6px; gap: 6px; }
 .quick.mini button { padding: 5px 4px; font-size: 12.5px; }
+
+.fseg button.on[data-f="1"] { background: var(--manual); color: #071226; }

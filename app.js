@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const C = window.Core;
-  const VERSION = "1.8.2";
+  const VERSION = "1.8.3";
   const $ = (id) => document.getElementById(id);
   const S = C.fmtSilver;
   const SLOW_DAYS = 7;
@@ -979,6 +979,7 @@
     fill($("a-buy"), [C.SAME_CITY].concat(C.CITIES), ui.aBuy, { [C.SAME_CITY]: "Wie Crafting-Stadt" });
     fill($("a-sell"), [C.AUTO_MARKET, C.SAME_CITY].concat(C.CITIES), ui.aSell, { [C.SAME_CITY]: "Wie Crafting-Stadt" });
     $("a-sellmode").value = ui.aSellMode; $("a-buymode").value = ui.aBuyMode;
+    fsegRender("a", ui.aFocus, o.city, gd.recipes[aId()]);
     $("a-daily").value = ui.aDaily; $("a-focus").checked = ui.aFocus; if (document.activeElement !== $("a-myfocus")) $("a-myfocus").value = myFocus();
     $("a-opts-sum").textContent = `${o.city}${o.buyCity !== o.city ? " · Kauf " + o.buyCity : ""} · ${ui.aSell === C.AUTO_MARKET ? "bester Markt" : o.sellLocs[0]}${ui.aFocus ? " · Fokus" : ""}`;
   }
@@ -1014,6 +1015,15 @@
   }
 
   /** Klarer Hinweis, wofür der Einkauf gerechnet ist – und was passiert, wenn der Fokus fehlt. */
+  /** Großer, gut sichtbarer Fokus-Schalter direkt unter der Menge. */
+  function fsegRender(p, on, city, rec) {
+    [...$(p + "-fseg").children].forEach((b) => b.classList.toggle("on", (b.dataset.f === "1") === !!on));
+    const info = $(p + "-finfo");
+    if (!rec) { info.textContent = ""; return; }
+    const r = C.returnRate(C.productionBonus(settings, city, rec.cat, !!on, Number(p === "a" ? ui.aDaily : ui.cDaily) || 0));
+    info.innerHTML = on ? `<span class="gold">✦ Fokus an · dein Fokus: <b>${S(myFocus())}</b> · Ertragsrate ${C.fmtNum(r * 100)} %</span>`
+      : `<span class="muted">Ohne Fokus · Ertragsrate im Spiel ${C.fmtNum(r * 100)} %</span>`;
+  }
   function planNote(city, focus, fs, nfCrafts, amount) {
     const pc = (r) => C.fmtNum(r * 100) + " %";
     let h = `<div class="plan-note">Gerechnet für: <b>Craften in ${city}</b> · <b>${focus ? "MIT Fokus" : "ohne Fokus"}</b>`;
@@ -1276,6 +1286,7 @@
     $("c-buy").options[0].textContent = "Wie Crafting-Stadt";
     $("c-sell").options[1].textContent = "Wie Crafting-Stadt";
     $("c-sellmode").value = ui.cSellMode; $("c-buymode").value = ui.cBuyMode;
+    fsegRender("c", ui.cFocus, cCities().city, gd.recipes[ui.cItem]);
     $("c-daily").value = ui.cDaily; $("c-station").value = ui.cStation; $("c-focus").checked = ui.cFocus; if (document.activeElement !== $("c-myfocus")) $("c-myfocus").value = myFocus();
   }
 
@@ -2668,6 +2679,8 @@
     $("es-run").addEventListener("click", esRun);
     [["es-route", "esRoute"], ["es-sellmode", "esSellMode"], ["es-vol", "esVol"], ["es-age", "esAge"], ["es-min", "esMin"]].forEach(([id, key]) =>
       $(id).addEventListener("change", (e) => { ui[key] = e.target.type === "number" ? Number(e.target.value) || 0 : e.target.value; saveUi(); esRender(); }));
+    [...$("a-fseg").children].forEach((b) => b.addEventListener("click", () => { ui.aFocus = b.dataset.f === "1"; saveUi(); renderAlch(); }));
+    [...$("c-fseg").children].forEach((b) => b.addEventListener("click", () => { ui.cFocus = b.dataset.f === "1"; saveUi(); renderCraft(); }));
     $("a-myfocus").addEventListener("change", (e) => { ui.sFocus = Math.max(0, Number(e.target.value) || 0); saveUi(); renderAlch(); });
     $("c-myfocus").addEventListener("change", (e) => { ui.sFocus = Math.max(0, Number(e.target.value) || 0); saveUi(); renderCraft(); });
     $("c-browse").addEventListener("click", () => { cBrowse = true; renderCraftSearch(); $("c-search").focus(); });

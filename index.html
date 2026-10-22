@@ -13,7 +13,7 @@
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="icon" type="image/png" href="icons/icon-64.png">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="stylesheet" href="style.css?v=1.9.0">
+<link rel="stylesheet" href="style.css?v=1.9.1">
 </head>
 <body>
 <header class="top">
@@ -189,6 +189,7 @@
             <div class="field"><label>Einkaufsart</label><select id="a-buymode">
               <option value="instant">Sofortkauf</option><option value="order">Kaufauftrag</option></select></div>
             <div class="field"><label>Tagesbonus %</label><input id="a-daily" type="number" inputmode="decimal" value="0"></div>
+            <div class="field"><label>Stationsgebühr pro Craft <span class="muted small">(„Silberkosten“ im Spiel ÷ Crafts)</span></label><input id="a-station" type="number" inputmode="numeric" value="0"></div>
             <div class="full"><label class="toggle"><span>Zwischenprodukte selbst herstellen, wenn billiger <span class="muted small">(Extrakt, Fischsauce, Zerkleinern …)</span></span><input type="checkbox" id="a-self"></label></div>
             <div class="full"><label class="toggle"><span>Mit Fokus craften</span><input type="checkbox" id="a-focus"></label></div>
             <div class="field"><label>Dein Fokus (verfügbar)</label><input id="a-myfocus" type="number" inputmode="numeric"></div>
@@ -273,6 +274,13 @@
         <div class="status"></div>
       </div>
 
+      <div class="seg ctabs" id="c-mode">
+        <button data-t="craft">⚒ Herstellen</button>
+        <button data-t="ench">✨ Verzaubern</button>
+        <button data-t="jour">📘 Journale</button>
+      </div>
+
+      <div id="c-p-craft">
       <div class="card">
         <details class="opts">
           <summary>Städte, Fokus &amp; Gebühren <span class="muted small" id="c-opts-sum"></span></summary>
@@ -285,7 +293,7 @@
             <div class="field"><label>Einkaufsart</label><select id="c-buymode">
               <option value="instant">Sofortkauf</option><option value="order">Kaufauftrag</option></select></div>
             <div class="field"><label>Tagesbonus %</label><input id="c-daily" type="number" inputmode="decimal" value="0"></div>
-            <div class="field"><label>Stationsgebühr pro Craft</label><input id="c-station" type="number" inputmode="numeric" value="0"></div>
+            <div class="field"><label>Stationsgebühr pro Craft <span class="muted small">(„Silberkosten“ im Spiel ÷ Crafts)</span></label><input id="c-station" type="number" inputmode="numeric" value="0"></div>
             <div class="full"><label class="toggle"><span>Mit Fokus craften</span><input type="checkbox" id="c-focus"></label></div>
             <div class="field"><label>Dein Fokus (verfügbar)</label><input id="c-myfocus" type="number" inputmode="numeric"></div>
           </div>
@@ -302,10 +310,11 @@
       </div>
 
       <div class="card"><table class="res num" id="c-table"></table></div>
-      <div class="card" id="c-journal" style="display:none"></div>
-      <div class="card" id="c-ench" style="display:none"></div>
       <button class="btn primary block" id="c-shop">📝 Rezept speichern – Einkauf zum Abhaken</button>
       <button class="btn block" id="c-done" style="margin-top:8px">✔ Schon gecraftet – direkt ins Buch</button>
+      </div>
+      <div id="c-p-ench"><div class="card" id="c-ench" style="display:none"></div></div>
+      <div id="c-p-jour"><div class="card" id="c-journal" style="display:none"></div></div>
     </div>
   </section>
 
@@ -508,7 +517,7 @@
 <div class="toast note" id="note"><span id="note-text"></span><button id="note-btn">Ansehen</button></div>
 <div class="toast" id="toast"><span id="toast-text"></span><button id="toast-btn">Neu laden</button></div>
 
-<script src="core.js?v=1.9.0"></script>
-<script src="app.js?v=1.9.0"></script>
+<script src="core.js?v=1.9.1"></script>
+<script src="app.js?v=1.9.1"></script>
 </body>
 </html>

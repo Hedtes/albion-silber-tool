@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const C = window.Core;
-  const VERSION = "1.9.0";
+  const VERSION = "1.9.1";
   const $ = (id) => document.getElementById(id);
   const S = C.fmtSilver;
   const SLOW_DAYS = 7;
@@ -295,7 +295,7 @@
     t.append(
       tile(best === null ? "–" : S(best), `bester Gewinn für ${S(qty())} Stück`, best === null ? "" : best > 0 ? "good" : "bad"),
       tile(priced.length ? `${pos} / ${priced.length}` : "–", "profitable Stufen", pos ? "good" : priced.length ? "bad" : ""),
-      tile(rows.length ? `${C.fmtNum(rows[0].rrr_nf * 100)} / ${C.fmtNum(rows[0].rrr_f * 100)} %` : "–", "Rücklaufquote ohne / mit Fokus"),
+      tile(rows.length ? `${C.fmtNum(rows[0].rrr_nf * 100)} / ${C.fmtNum(rows[0].rrr_f * 100)} %` : "–", "Ertragsrate ohne / mit Fokus"),
       tile(spfs.length ? C.fmtNum(Math.max(...spfs)) : "–", "bestes Silber pro Fokus", spfs.length && Math.max(...spfs) > 0 ? "good" : ""),
     );
   }
@@ -457,7 +457,7 @@
     // Ergebnis
     const d = { nf: C.refineDetail(gd, settings, r, calcAmount(r, false), false), f: C.refineDetail(gd, settings, r, calcAmount(r, true), true) };
     const fields = [
-      ["n", "Herstellen (Stück)", (v) => S(v), true], ["rrr", "Rücklaufquote", (v) => C.fmtNum(v * 100) + " %"],
+      ["n", "Herstellen (Stück)", (v) => S(v), true], ["rrr", "Ertragsrate", (v) => C.fmtNum(v * 100) + " %"],
       ["raw_buy", "Rohstoff kaufen", (v) => S(v)], ["prev_buy", "Vorstufe kaufen", (v) => v === null ? "–" : S(v)],
       ["cost_buy", "Einkauf (Silber)", (v) => S(v), true], ["gross", "Materialwert", (v) => S(v)],
       ["returned", "– davon Rückgabe", (v) => S(v)], ["revenue_gross", "Verkaufswert", (v) => S(v)],
@@ -507,7 +507,7 @@
       el("div", { class: "small muted" }, `${S(per)} statt ${S(ch.market)} pro Stück (Kaufpreis in ${buyCity})`));
     const ol = el("ol", { class: "chain-steps" });
     ol.append(el("li", {}, "Kaufen in " + buyCity + ": " + Object.entries(ch.buy).map(([id, q]) => `${S(q)} × ${gd.label(id)}`).join(" + ")));
-    ch.steps.forEach((st) => ol.append(el("li", {}, `${S(st.out)} × ${gd.label(st.item)} refinen in ${st.city} (Rücklauf ${pct(st.rrr)}) – aus ` +
+    ch.steps.forEach((st) => ol.append(el("li", {}, `${S(st.out)} × ${gd.label(st.item)} refinen in ${st.city} (Ertragsrate ${pct(st.rrr)}) – aus ` +
       st.from.map(([id, q]) => `${S(q)} × ${gd.label(id)}`).join(" + "))));
     box.append(ol);
     const rcRec = gd.recipes[ch.item];
@@ -870,9 +870,9 @@
         const t = (l) => `T${gd.recipes[x.base].tier}.${l}`;
         eb.append(el("div", { class: "stage good", on: { click: () => {
           Object.assign(ui, { eSrc: "buy", cBuy: x.buyCity, cSell: x.sale.loc === x.buyCity ? C.SAME_CITY : x.sale.loc, cSellMode: ui.sSellMode || "instant",
-            cBuyMode: ui.sBuyMode, cItem: x.src, cQty: 1, cGroup: gd.recipes[x.src].group });
+            cBuyMode: ui.sBuyMode, cItem: x.src, cQty: 1, cGroup: gd.recipes[x.src].group, cTab: "ench" });
           saveUi(); show("craft");
-          setTimeout(() => { const c = $("c-ench"); c && c.scrollIntoView({ behavior: "smooth", block: "start" }); }, 400);
+          setTimeout(() => { const c = $("c-mode"); c && c.scrollIntoView({ behavior: "smooth", block: "start" }); }, 400);
         } } },
           el("div", { class: "h" }, el("div", { class: "name" }, `${gd.name(x.base)} ${t(x.from)} → ${t(x.to)}`), el("div", { class: "profit num pos" }, `+${S(x.profit)}/Stk`)),
           el("div", { class: "where" }, `Kaufen in ${x.buyCity} (${S(x.ip)}) + ${S(x.n)} × ${gd.name(x.mat)} à ${S(x.mp)} → Verkauf ${x.sale.loc === C.BLACK_MARKET ? "Black Market" : x.sale.loc} ${S(x.sale.price)}`),
@@ -930,7 +930,7 @@
     const buyCity = ui.aBuy === C.SAME_CITY ? city : ui.aBuy;
     const sellLocs = ui.aSell === C.AUTO_MARKET ? C.MARKETS : [ui.aSell === C.SAME_CITY ? city : ui.aSell];
     return { city, buyCity, buyMode: ui.aBuyMode, maxAge: settings.max_age_hours, alts: alchData.alts,
-      focus: ui.aFocus, daily: Number(ui.aDaily) || 0, sellLocs, sellMode: ui.aSellMode, stock, focusAvail: myFocus(), fce: Number(ui.sFce) || 0, buyOnly: ui.aSelf === false };
+      focus: ui.aFocus, daily: Number(ui.aDaily) || 0, sellLocs, sellMode: ui.aSellMode, stock, focusAvail: myFocus(), fce: Number(ui.sFce) || 0, buyOnly: ui.aSelf === false, station: Math.max(0, Number(ui.aStation) || 0) };
   }
   const aQty = () => Math.max(1, Math.floor(Number(ui.aQty) || 1));
   const aBudget = () => Math.max(0, Math.floor(Number(ui.aBudget) || 0));
@@ -1064,7 +1064,7 @@
     fill($("a-sell"), [C.AUTO_MARKET, C.SAME_CITY].concat(C.CITIES), ui.aSell, { [C.SAME_CITY]: "Wie Crafting-Stadt" });
     $("a-sellmode").value = ui.aSellMode; $("a-buymode").value = ui.aBuyMode;
     fsegRender("a", ui.aFocus, o.city, gd.recipes[aId()]);
-    $("a-self").checked = ui.aSelf !== false;
+    $("a-self").checked = ui.aSelf !== false; $("a-station").value = ui.aStation || 0;
     $("a-daily").value = ui.aDaily; $("a-focus").checked = ui.aFocus; if (document.activeElement !== $("a-myfocus")) $("a-myfocus").value = myFocus();
     $("a-opts-sum").textContent = `${o.city}${o.buyCity !== o.city ? " · Kauf " + o.buyCity : ""} · ${ui.aSell === C.AUTO_MARKET ? "bester Markt" : o.sellLocs[0]}${ui.aFocus ? " · Fokus" : ""}`;
   }
@@ -1154,7 +1154,7 @@
         `Für ${S(aBudget())} Silber: ${S(plan.pieces)} Stück (${S(plan.crafts)} Crafts) · Einkauf ${S(plan.buyCost)} · übrig ${S(aBudget() - (plan.buyCost || 0))}`;
     } else {
       $("a-crafts-info").textContent = `= ${S(plan.crafts)} Crafts à ${rec.amount} Stück` + (plan.pieces !== aQty() ? ` → ergibt ${S(plan.pieces)} Stück` : "") +
-        ` · Rücklaufquote ${C.fmtNum(plan.rrr * 100)} %`;
+        ` · Ertragsrate ${C.fmtNum(plan.rrr * 100)} %`;
     }
 
     // Banner
@@ -1319,7 +1319,7 @@
   }
 
   function selectCraft(id) {
-    ui.cItem = id; saveUi(); cBrowse = false; $("c-search").value = "";
+    ui.cItem = id; ui.cTab = "craft"; saveUi(); cBrowse = false; $("c-search").value = "";
     renderCraftSearch(); renderCraft();
     $("c-calc").scrollIntoView({ behavior: "smooth", block: "start" });
     const r = gd.recipes[id];
@@ -1470,7 +1470,7 @@
     const rowsT = [
       ["Herstellen", `${S(k.crafts * rec.amount)} Stück (${S(k.crafts)} Crafts)`, true],
       ["Einkauf (Silber)", S(k.buyCost), true, "gold"],
-      ["Rücklaufquote", `${C.fmtNum(k.rrr * 100)} % (Bonus ${Math.round(k.bonus)})`],
+      ["Ertragsrate", `${C.fmtNum(k.rrr * 100)} % (Bonus ${Math.round(k.bonus)})`],
       ["Materialwert gesamt", r.missing.length ? "–" : S(r.gross)],
       ["– davon Rückgabe", r.missing.length ? "–" : S(r.returned), false, "pos"],
       ["+ Stationsgebühr", S(r.station)],
@@ -1496,6 +1496,18 @@
     }
     renderJournal(k);
     renderEnchant(k);
+    renderCraftTabs();
+  }
+  /** Reiter im Crafting-Rechner: Herstellen / Verzaubern / Journale – immer nur ein Bereich sichtbar. */
+  function renderCraftTabs() {
+    const has = { craft: true, ench: !!enchInfo(ui.cItem), jour: !!journalFor(ui.cItem) };
+    if (!has[ui.cTab || "craft"]) ui.cTab = "craft";
+    const t = ui.cTab || "craft";
+    [...$("c-mode").children].forEach((b) => { b.style.display = has[b.dataset.t] ? "" : "none"; b.classList.toggle("on", b.dataset.t === t); });
+    $("c-mode").style.display = has.ench || has.jour ? "" : "none";
+    $("c-p-craft").style.display = t === "craft" ? "" : "none";
+    $("c-p-ench").style.display = t === "ench" ? "" : "none";
+    $("c-p-jour").style.display = t === "jour" ? "" : "none";
   }
 
   // ------------------------------------------------------------ Einkaufsliste
@@ -1549,7 +1561,7 @@
     return { uid: uid(), at: Date.now(), src: "Crafting", id: ui.cItem, pieces: k.crafts * k.rec.amount, crafts: k.crafts,
       city: k.city, buyCity: k.buy, sellLoc: k.sellLoc, sellMode: k.mode, focus: !!ui.cFocus,
       ...matsWithChains(k.plan.map((pl) => ({ id: pl.id, need: pl.buy, have: pl.fromStock, buy: pl.buyNet, unit: pl.price, cost: pl.cost, chain: pl.chain })), k.buy),
-      cost: k.buyCost, price: k.best ? k.best.price : null, rrr: k.rrr, focusNeed: k.fs.cf * k.fs.fpc, focusCrafts: k.fs.cf, rrrF: k.fs.rrrF, rrrN: k.fs.rrrN,
+      cost: k.buyCost, price: k.best ? k.best.price : null, fees: Math.round(k.res.station || 0), rrr: k.rrr, focusNeed: k.fs.cf * k.fs.fpc, focusCrafts: k.fs.cf, rrrF: k.fs.rrrF, rrrN: k.fs.rrrN,
       nfPieces: k.fs.cf ? C.jointSim(k.rec.res, k.plan.map((x) => x.buy), k.crafts,
         C.returnRate(C.productionBonus(settings, k.city, k.rec.cat, false, Number(ui.cDaily) || 0))).done * k.rec.amount : null,
       revenue: k.res.complete ? k.res.revenue : null, profit: k.res.complete ? k.res.profit : null };
@@ -1561,7 +1573,7 @@
     return { uid: uid(), at: Date.now(), src: "Tränke & Essen", id, pieces: plan.pieces, crafts: plan.crafts,
       city: o.city, buyCity: o.buyCity, sellLoc, sellMode: plan.best ? plan.best.mode : o.sellMode, focus: !!o.focus,
       mats: plan.buyList.map((it) => mat(it.item, it.qty, it.fromStock, it.buy, it.price, it.cost, o.buyCity)), steps,
-      rrr: plan.rrr, focusNeed: plan.focusNeed, focusCrafts: plan.focusCrafts, rrrF: plan.rrrF, rrrN: plan.rrrN, nfPieces: plan.noFocusCrafts * plan.rec.amount,
+      fees: plan.res ? Math.round(plan.res.station || 0) : 0, rrr: plan.rrr, focusNeed: plan.focusNeed, focusCrafts: plan.focusCrafts, rrrF: plan.rrrF, rrrN: plan.rrrN, nfPieces: plan.noFocusCrafts * plan.rec.amount,
       cost: plan.buyCost, price: plan.best ? plan.best.price : null,
       revenue: plan.complete ? plan.res.revenue : null, profit: plan.complete ? plan.res.profit : null };
   }
@@ -1702,11 +1714,12 @@
   }
   /** Erwarteter Gewinn live: Erlös (Verkaufspreis × Stück nach Steuer) − Einkauf (bezahlt bzw. eingetragen). */
   function projProfit(p) {
-    const cost = toBuy(p).reduce((a, m) => a + (matCost(m) || 0), 0);
+    const fees = p.fees || 0;
+    const cost = toBuy(p).reduce((a, m) => a + (matCost(m) || 0), 0) + fees;
     const missing = toBuy(p).some((m) => matCost(m) === null);
     const fee = C.sellFee(settings, p.sellMode || "order");
     const net = p.price ? p.pieces * p.price * (1 - fee) : (p.revenue !== null && p.revenue !== undefined ? p.revenue : null);
-    return { cost, net, fee, missing, profit: net === null || missing ? null : net - cost };
+    return { cost, net, fee, fees, missing, profit: net === null || missing ? null : net - cost };
   }
   function editProjSale(p) {
     qpOpen({ title: `Verkauf: ${gd.label(p.id)}`, sub: `${p.sellLoc} · ${p.sellMode === "instant" ? "Sofortverkauf (nur Steuer)" : "Verkaufsauftrag (Steuer + Einstellgebühr)"} · Preis pro Stück eintragen`,
@@ -1721,13 +1734,14 @@
   function projMoney(p, spent) {
     const pp = projProfit(p);
     const box = el("div", {});
-    box.append(
+    [
       el("div", { class: "money-row" }, el("span", {}, `Verkauf ${p.sellLoc}: ${S(p.pieces)} × ${p.price ? S(p.price) : "?"}` + (p.priceManual ? " (eigener Preis)" : "")),
         el("button", { class: "icon-btn sm", title: "Verkaufspreis ändern", on: { click: () => editProjSale(p) } }, "✎")),
       el("div", { class: "money-row" }, el("span", { class: "muted" }, `Erlös nach Steuer (${C.fmtNum(pp.fee * 100)} %)`), el("b", { class: "num" }, S(pp.net))),
-      el("div", { class: "money-row" }, el("span", { class: "muted" }, `− Einkauf${spent ? " (davon bezahlt " + S(spent) + ")" : ""}`), el("b", { class: "num" }, (pp.missing ? "≥ " : "") + S(pp.cost))),
+      el("div", { class: "money-row" }, el("span", { class: "muted" }, `− Einkauf${spent ? " (davon bezahlt " + S(spent) + ")" : ""}`), el("b", { class: "num" }, (pp.missing ? "≥ " : "") + S(pp.cost - pp.fees))),
+      pp.fees ? el("div", { class: "money-row" }, el("span", { class: "muted" }, "− Stationsgebühren"), el("b", { class: "num" }, S(pp.fees))) : null,
       el("div", { class: "money-row total" }, el("span", {}, "= Erwarteter Gewinn"),
-        el("b", { class: "num " + (pp.profit === null ? "" : pp.profit > 0 ? "pos" : "neg") }, pp.profit === null ? "Preis fehlt" : `${pp.profit > 0 ? "+" : ""}${S(pp.profit)}`)));
+        el("b", { class: "num " + (pp.profit === null ? "" : pp.profit > 0 ? "pos" : "neg") }, pp.profit === null ? "Preis fehlt" : `${pp.profit > 0 ? "+" : ""}${S(pp.profit)}`))].filter(Boolean).forEach((x) => box.append(x));
     return box;
   }
   function projectCard(p) {
@@ -2272,7 +2286,7 @@
     };
     const own = k.res.missing.length ? null : k.res.cost / Math.max(1, k.res.produced);
     const bought = unit(ui.cItem, k.buy);
-    const src = ui.eSrc === "buy" ? "buy" : "craft";
+    const src = ui.eSrc === "buy" || (ui.eSrc !== "craft" && own === null) ? "buy" : "craft";
     const baseCost = src === "buy" ? bought.p : own;
     const baseSaleNet = k.best ? k.best.price * (1 - C.sellFee(settings, k.mode)) : null;
     const fee = Math.max(0, Number(ui.eFee) || 0);
@@ -2316,7 +2330,7 @@
         `Pro Stück und Stufe ${S(e.n)} ${ENCH_WORD.slice(e.from).join(" / ")} · an der Artefaktschmiede · Qualität bleibt gleich · gerechnet für ${S(e.pieces)} Stück (MENGE oben)`),
       el("div", { class: "small", style: "margin-bottom:4px" }, `Woher kommt dein ${t(e.from)}-Item?`),
       el("div", { class: "seg", style: "margin-bottom:8px" },
-        segBtn("craft", `⚒ Selbst gecraftet · ${S(e.own)}`), segBtn("buy", `🛒 Gekauft · ${S(e.bought.p)}`)),
+        segBtn("craft", `⚒ Selbst gecraftet · ${e.own === null ? "Preise fehlen" : S(e.own)}`), segBtn("buy", `🛒 Gekauft · ${S(e.bought.p)}`)),
       el("div", { class: "row", style: "justify-content:space-between;gap:8px" },
         el("div", { class: "small muted" }, `Einkauf in ${k.buy}${e.src === "buy" ? "" : " · Craftkosten aus dem Rechner oben"}`),
         e.src === "buy" ? el("button", { class: "icon-btn", on: { click: () => aEditPrice(ui.cItem, k.buy, e.kind, null, renderCraft, e.pieces) } }, "✎") : null),
@@ -2471,7 +2485,8 @@
         on: { click: () => { ui.eSrc = "buy"; ui.cBuy = x.buyCity; ui.cSell = x.sale.loc === x.buyCity ? C.SAME_CITY : x.sale.loc;
           ui.cSellMode = ui.esSellMode; ui.cBuyMode = "instant";
           if (!ui.cQty || Number(ui.cQty) < 1) ui.cQty = 1; saveUi(); selectCraft(x.src);
-          setTimeout(() => { const c = $("c-ench"); c && c.scrollIntoView({ behavior: "smooth", block: "start" }); }, 400); } } },
+          ui.cTab = "ench"; saveUi();
+          setTimeout(() => { const c = $("c-mode"); c && c.scrollIntoView({ behavior: "smooth", block: "start" }); }, 400); } } },
         el("div", { class: "row", style: "justify-content:space-between;gap:8px" },
           el("b", {}, `${gd.name(x.base)} ${t(x.from)} → ${t(x.to)}`),
           el("b", { class: "pos num" }, `+${S(x.profit)}`)),
@@ -2924,9 +2939,11 @@
       $(id).addEventListener("change", (e) => { ui[key] = e.target.type === "number" ? Number(e.target.value) || 0 : e.target.value; saveUi(); esRender(); }));
     [...$("a-fseg").children].forEach((b) => b.addEventListener("click", () => { ui.aFocus = b.dataset.f === "1"; saveUi(); renderAlch(); }));
     [...$("c-fseg").children].forEach((b) => b.addEventListener("click", () => { ui.cFocus = b.dataset.f === "1"; saveUi(); renderCraft(); }));
+    $("a-station").addEventListener("change", (e) => { ui.aStation = Math.max(0, Number(e.target.value) || 0); saveUi(); renderAlch(); });
     $("a-self").addEventListener("change", (e) => { ui.aSelf = e.target.checked; saveUi(); renderAlch(); });
     $("a-myfocus").addEventListener("change", (e) => { ui.sFocus = Math.max(0, Number(e.target.value) || 0); saveUi(); renderAlch(); });
     $("c-myfocus").addEventListener("change", (e) => { ui.sFocus = Math.max(0, Number(e.target.value) || 0); saveUi(); renderCraft(); });
+    [...$("c-mode").children].forEach((b) => b.addEventListener("click", () => { ui.cTab = b.dataset.t; saveUi(); renderCraftTabs(); }));
     $("c-browse").addEventListener("click", () => { cBrowse = true; renderCraftSearch(); $("c-search").focus(); });
     $("a-browse").addEventListener("click", () => { aBrowse = true; renderAlchSearch(); $("a-search").focus(); });
     $("c-search").addEventListener("input", () => { clearTimeout(st); st = setTimeout(renderCraftSearch, 150); });

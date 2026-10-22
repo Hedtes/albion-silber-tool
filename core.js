@@ -850,7 +850,7 @@
     const r = usesStock ? run(override) : r1;
     const prices = {};
     r.ings.forEach((x) => { prices[x.id] = x.node.unit; });
-    const res = calcCraft(rec, crafts, rrr, prices, best ? best.price : null, sellFee(s, best ? best.mode : o.sellMode), 0, o.focus);
+    const res = calcCraft(rec, crafts, rrr, prices, best ? best.price : null, sellFee(s, best ? best.mode : o.sellMode), o.station || 0, o.focus);
 
     let buyCost = r.complete ? 0 : null, stockValue = 0;
     const buyList = Object.entries(r.out.buy).map(([item, qty]) => {

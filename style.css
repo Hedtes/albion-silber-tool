@@ -312,3 +312,6 @@ body.no-hints .hint { display: none !important; }
 details.chain-wrap { margin-top: 6px; }
 details.chain-wrap summary { cursor: pointer; }
 .chain-hint { margin-top: 4px; }
+
+.ctabs { margin: 0 0 10px; }
+.ctabs button { font-size: 13.5px; padding: 9px 4px; }

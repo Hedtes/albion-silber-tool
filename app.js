@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const C = window.Core;
-  const VERSION = "1.9.3";
+  const VERSION = "1.9.4";
   const $ = (id) => document.getElementById(id);
   const S = C.fmtSilver;
   const SLOW_DAYS = 7;
@@ -500,16 +500,38 @@
   /** Was genau zu tun ist + wie viel es spart (und was die Bonusstadt zusätzlich bringen würde). */
   function chainView(ch, buyCity, buyMode, opts) {
     opts = opts || {};
-    const box = el("div", { class: "chain" });
-    const per = ch.qty ? ch.ownCost / ch.qty : null;
+    const after = opts.after || refreshAll;
+    const kind = buyMode === "instant" ? "sell" : "buy";
+    const sp = ch.selfPlan || { buy: ch.buy, steps: ch.steps, subs: [] };
+    const box = el("div", { class: "chain" + (ch.saving !== null && ch.saving <= 0 ? " bad" : "") });
+    const per = ch.qty && ch.ownCost !== null ? ch.ownCost / ch.qty : null;
+    const ok = ch.saving === null || ch.saving > 0;
     box.append(el("div", { class: "chain-h" }, `★ ${S(ch.qty)} × ${gd.label(ch.item)} selbst refinen`,
-      ch.saving !== null ? el("b", { class: ch.saving > 0 ? "pos" : "neg" }, ` · spart ${S(ch.saving)}`) : null),
+      ch.saving !== null ? el("b", { class: ok ? "pos" : "neg" }, ok ? ` · spart ${S(ch.saving)}` : ` · ✘ lohnt sich nicht (${S(-ch.saving)} teurer)`) : null),
       el("div", { class: "small muted" }, `${S(per)} statt ${S(ch.market)} pro Stück (Kaufpreis in ${buyCity})`));
-    const ol = el("ol", { class: "chain-steps" });
-    ol.append(el("li", {}, "Kaufen in " + buyCity + ": " + Object.entries(ch.buy).map(([id, q]) => `${S(q)} × ${gd.label(id)}`).join(" + ")));
-    ch.steps.forEach((st) => ol.append(el("li", {}, `${S(st.out)} × ${gd.label(st.item)} refinen in ${st.city} (Ertragsrate ${pct(st.rrr)}) – aus ` +
+    // Einkauf mit Preisen + ✎
+    const ib = el("div", { class: "chain-buy" }, el("div", { class: "small", style: "font-weight:700;margin:6px 0 2px" }, `1. Kaufen in ${buyCity}:`));
+    const subOf = (id) => (sp.subs || []).find((x) => x.item === id);
+    for (const [id, q] of Object.entries(sp.buy)) {
+      const [p, src] = store.get(id, buyCity, kind);
+      const u = p !== null && (src !== "alt" || src === "manuell") ? C.buyUnitCost(settings, p, buyMode) : null;
+      const sub = subOf(id);
+      const alt = sub && sub.ownCost !== null && sub.qty ? sub.ownCost / sub.qty : null;
+      ib.append(el("div", { class: "chain-row" },
+        el("div", { class: "t" }, el("div", {}, `${S(q)} × ${gd.label(id)}`),
+          el("div", { class: "small muted" }, u === null ? "Preis fehlt" : `${S(u)} pro Stück · ${S(u * q)}` + (src === "manuell" ? " · eigener Preis" : ""),
+            alt !== null ? ` · selbst refinen wäre ${S(alt)}/Stk` : "")),
+        el("button", { class: "icon-btn sm", title: "Preis eintragen", on: { click: (ev) => { ev.stopPropagation(); aEditPrice(id, buyCity, kind, null, after, q); } } }, "✎")));
+    }
+    box.append(ib);
+    const ol = el("ol", { class: "chain-steps", start: 2 });
+    sp.steps.forEach((st) => ol.append(el("li", {}, `${S(st.out)} × ${gd.label(st.item)} refinen in ${st.city} (Ertragsrate ${pct(st.rrr)}) – aus ` +
       st.from.map(([id, q]) => `${S(q)} × ${gd.label(id)}`).join(" + "))));
     box.append(ol);
+    // Vergleich: fertig kaufen
+    box.append(el("div", { class: "chain-row" },
+      el("div", { class: "t small" }, `Zum Vergleich fertig kaufen: ${S(ch.qty)} × ${gd.label(ch.item)} à ${S(ch.market)} = ${S(ch.market !== null ? ch.market * ch.qty : null)}`),
+      el("button", { class: "icon-btn sm", title: "Kaufpreis eintragen", on: { click: (ev) => { ev.stopPropagation(); aEditPrice(ch.item, buyCity, kind, null, after, ch.qty); } } }, "✎")));
     const rcRec = gd.recipes[ch.item];
     const rc = rcRec ? C.bonusCityFor(settings, rcRec.cat) : null;
     if (rc && rc !== ch.city && !opts.noBonus) {
@@ -517,12 +539,13 @@
       if (b.ownCost !== null && ch.ownCost !== null) {
         const extra = ch.ownCost - b.ownCost;
         box.append(el("div", { class: "small " + (extra > 0 ? "gold" : "muted") }, extra > 0
-          ? `💡 In ${rc} (Bonusstadt, Rücklauf ${pct(b.rrr)}) refinen spart zusätzlich ${S(extra)} – dafür Transport ${buyCity} → ${rc} → ${ch.city}`
+          ? `💡 In ${rc} (Bonusstadt, Ertragsrate ${pct(b.rrr)}) refinen spart zusätzlich ${S(extra)} – dafür Transport ${buyCity} → ${rc} → ${ch.city}`
           : `In ${rc} (Bonusstadt) wäre es nicht günstiger.`));
       }
     }
     return box;
   }
+
 
   // ------------------------------------------------------------ Silber-Finder
   const S_GROUPS = ["Refining", "Tränke", "Essen", "Waffen", "Rüstung", "Nebenhand", "Taschen & Umhänge", "Sammlerausrüstung", "Werkzeuge"];
@@ -768,7 +791,7 @@
       if (!ev.selfMade.includes(rid) || !isRefined(rid)) return;
       const ch = chainFor(rid, jb[i], ev.city, ev.buyCity, ev.buyMode);
       if (ch.saving) total += ch.saving;
-      inner.append(chainView(ch, ev.buyCity, ev.buyMode));
+      inner.append(chainView(ch, ev.buyCity, ev.buyMode, { after: () => { renderSilver(); } }));
     });
     d.append(el("summary", { class: "small gold" }, `★ Vorher selbst refinen: ${ev.selfMade.map((i) => gd.name(i)).join(", ")} · spart ${S(total)} – so geht's`), inner);
     return d;
@@ -1386,24 +1409,30 @@
   function craftChainBox(pl, k) {
     if (!isRefined(pl.id) || pl.buyNet <= 0) return null;
     const ch = pl.chain || chainFor(pl.id, pl.buyNet, k.city, k.buy, ui.cBuyMode);
-    if (ch.ownCost === null) return null;
+    if (!ch.selfPlan) return null;
+    const on = !!(ui.cSelf && ui.cSelf[pl.id]);
     const toggle = () => { ui.cSelf = Object.assign({}, ui.cSelf || {}); if (ui.cSelf[pl.id]) delete ui.cSelf[pl.id]; else ui.cSelf[pl.id] = true; saveUi(); renderCraft(); };
-    if (pl.chain) {
-      const d = el("div", {});
-      d.append(chainView(ch, k.buy, ui.cBuyMode));
-      if (ch.saving !== null && ch.saving <= 0) d.append(el("div", { class: "small neg" }, "⚠ Bei den aktuellen Preisen wäre fertig kaufen jetzt billiger."));
+    const view = chainView(ch, k.buy, ui.cBuyMode, { after: renderCraft });
+    const cheaper = ch.saving !== null && ch.saving > 0;
+    const d = el("div", {});
+    if (on) {
+      d.append(view);
+      if (!cheaper) d.append(el("div", { class: "small neg" }, "⚠ Mit diesen Preisen ist fertig kaufen billiger – es wird gerade mit Kaufen gerechnet. Preise anpassen oder ausschalten."));
       d.append(el("button", { class: "btn", style: "margin-top:6px", on: { click: toggle } }, "↺ Ausschalten – fertig kaufen"));
       return d;
     }
     const rc = C.bonusCityFor(settings, gd.recipes[pl.id].cat);
     const b = rc && rc !== k.city ? chainFor(pl.id, pl.buyNet, k.city, k.buy, ui.cBuyMode, rc) : null;
-    const bestSave = Math.max(ch.saving || 0, b && b.saving !== null ? b.saving : 0);
-    if (bestSave <= 0) return el("div", { class: "small muted" }, `Empfehlung: fertig kaufen – selbst refinen wäre ${S(-(ch.saving || 0))} teurer.`);
-    return el("div", { class: "chain-hint" },
-      el("div", { class: "small gold" }, ch.saving > 0 ? `★ Empfehlung: selbst refinen in ${k.city} – spart ${S(ch.saving)}` : `In ${k.city} selbst refinen spart nichts`,
-        b && b.saving > (ch.saving || 0) ? ` · in ${rc} (Bonusstadt) sogar ${S(b.saving)}` : ""),
-      ch.saving > 0 ? el("button", { class: "btn", style: "margin-top:4px", on: { click: toggle } }, "★ Selbst refinen einplanen") : null);
+    const det = el("details", { class: "chain-wrap" },
+      el("summary", { class: "small " + (cheaper ? "gold" : "muted") },
+        cheaper ? `★ Empfehlung: selbst refinen in ${k.city} – spart ${S(ch.saving)}` : ch.saving === null ? "Selbst refinen: Preise fehlen" : `Empfehlung: fertig kaufen – selbst refinen wäre ${S(-ch.saving)} teurer`,
+        b && b.saving !== null && b.saving > Math.max(0, ch.saving || 0) ? ` · in ${rc} (Bonusstadt) ${S(b.saving)}` : "",
+        " · Kette & Preise ansehen"), view);
+    d.append(det);
+    if (cheaper) d.append(el("button", { class: "btn", style: "margin-top:4px", on: { click: toggle } }, "★ Selbst refinen einplanen"));
+    return d;
   }
+
 
   function renderCraft() {
     if (!gd || !ui.cItem || !gd.recipes[ui.cItem]) { $("c-calc").style.display = "none"; return; }

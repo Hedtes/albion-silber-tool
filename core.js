@@ -568,10 +568,13 @@
     const ownCost = subs.reduce((a, x) => a + x.cost, 0) + (r.silver || 0) * crafts;
     out.ownCost = ownCost; out.city = city; out.rrr = rrr;
     out.saving = market !== null ? market * qty - ownCost : null;
+    // Der Weg „selbst refinen“ – immer mitgeben, damit man ihn ansehen und Preise eintragen kann
+    const sp = { buy: {}, steps: [], subs };
+    subs.forEach((x) => { for (const [k, v] of Object.entries(x.buy)) sp.buy[k] = (sp.buy[k] || 0) + v; sp.steps.push(...x.steps); });
+    sp.steps.push({ item, crafts, out: crafts * r.amount, city, rrr, from: r.res.map(([rid], i) => [rid, jb[i]]), kind: "refine", depth });
+    out.selfPlan = sp;
     if (market === null || ownCost < market * qty) {
-      out.self = true; out.cost = ownCost; out.buy = {};
-      subs.forEach((x) => { for (const [k, v] of Object.entries(x.buy)) out.buy[k] = (out.buy[k] || 0) + v; out.steps.push(...x.steps); });
-      out.steps.push({ item, crafts, out: crafts * r.amount, city, rrr, from: r.res.map(([rid], i) => [rid, jb[i]]), kind: "refine", depth });
+      out.self = true; out.cost = ownCost; out.buy = sp.buy; out.steps = sp.steps;
     }
     return out;
   }

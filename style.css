@@ -328,3 +328,8 @@ table.ench-routes tr.sel td { color: var(--gold-lt); }
 .miss-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 4px 0; font-size: 13px; }
 .miss-row .btn { padding: 6px 10px; font-size: 12.5px; }
 .warn { color: #f0b85a; }
+
+.chain.bad { border-color: rgba(239,106,92,.6); background: var(--neg-bg); }
+.chain-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-top: 1px dashed var(--line); }
+.chain-row .t { flex: 1; min-width: 0; }
+.chain-buy .chain-row:first-of-type { border-top: 0; }

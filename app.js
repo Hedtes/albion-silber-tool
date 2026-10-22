@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const C = window.Core;
-  const VERSION = "1.8.1";
+  const VERSION = "1.8.2";
   const $ = (id) => document.getElementById(id);
   const S = C.fmtSilver;
   const SLOW_DAYS = 7;
@@ -34,6 +34,8 @@
     sMargin: 5, sDays: 1, sAge: 12, sGroups: ["Refining", "Tränke", "Essen", "Taschen & Umhänge", "Werkzeuge", "Sammlerausrüstung"], sTiers: [4, 5, 6, 7], sEnchs: [0, 1, 2, 3], sSellMode: "instant", sEnchUp: true,
   }, storage.get("ui", {}));
   const saveUi = () => storage.set("ui", ui);
+  /** Dein verfügbarer Fokus (gilt für alle Rechner und den Silber-Finder). */
+  const myFocus = () => Math.max(0, Math.floor(Number(ui.sFocus) || 0));
   if (!ui.sV3) { ui.sV3 = true; if (!Number(ui.sFocus)) ui.sFocus = 10000; saveUi(); }
   if (!ui.sV2) {   // Silber-Finder: einmalig auf die breiteren neuen Standardwerte setzen
     Object.assign(ui, { sV2: true, sMargin: 5, sAge: 12, sSellMode: "instant", sEnchUp: true,
@@ -844,7 +846,7 @@
     const buyCity = ui.aBuy === C.SAME_CITY ? city : ui.aBuy;
     const sellLocs = ui.aSell === C.AUTO_MARKET ? C.MARKETS : [ui.aSell === C.SAME_CITY ? city : ui.aSell];
     return { city, buyCity, buyMode: ui.aBuyMode, maxAge: settings.max_age_hours, alts: alchData.alts,
-      focus: ui.aFocus, daily: Number(ui.aDaily) || 0, sellLocs, sellMode: ui.aSellMode, stock };
+      focus: ui.aFocus, daily: Number(ui.aDaily) || 0, sellLocs, sellMode: ui.aSellMode, stock, focusAvail: myFocus(), fce: Number(ui.sFce) || 0 };
   }
   const aQty = () => Math.max(1, Math.floor(Number(ui.aQty) || 1));
   const aBudget = () => Math.max(0, Math.floor(Number(ui.aBudget) || 0));
@@ -977,7 +979,7 @@
     fill($("a-buy"), [C.SAME_CITY].concat(C.CITIES), ui.aBuy, { [C.SAME_CITY]: "Wie Crafting-Stadt" });
     fill($("a-sell"), [C.AUTO_MARKET, C.SAME_CITY].concat(C.CITIES), ui.aSell, { [C.SAME_CITY]: "Wie Crafting-Stadt" });
     $("a-sellmode").value = ui.aSellMode; $("a-buymode").value = ui.aBuyMode;
-    $("a-daily").value = ui.aDaily; $("a-focus").checked = ui.aFocus;
+    $("a-daily").value = ui.aDaily; $("a-focus").checked = ui.aFocus; if (document.activeElement !== $("a-myfocus")) $("a-myfocus").value = myFocus();
     $("a-opts-sum").textContent = `${o.city}${o.buyCity !== o.city ? " · Kauf " + o.buyCity : ""} · ${ui.aSell === C.AUTO_MARKET ? "bester Markt" : o.sellLocs[0]}${ui.aFocus ? " · Fokus" : ""}`;
   }
 
@@ -1012,15 +1014,23 @@
   }
 
   /** Klarer Hinweis, wofür der Einkauf gerechnet ist – und was passiert, wenn der Fokus fehlt. */
-  function planNote(city, focus, rrr, focusNeed, nfCrafts, crafts, amount) {
-    let h = `<div class="plan-note">Gerechnet für: <b>Craften in ${city}</b> · <b>${focus ? "MIT Fokus" : "ohne Fokus"}</b> · Rücklauf ${C.fmtNum(rrr * 100)} %`;
-    if (focus) {
-      h += `<br>Du brauchst <b>${S(focusNeed)} Fokus</b> (ohne Fokus-Effizienz).`;
-      if (nfCrafts < crafts) h += `<div class="neg" style="margin-top:4px">⚠ Craftest du <b>ohne Fokus</b> oder in einer anderen Stadt, reicht das Material nur für ca. <b>${S(nfCrafts * amount)}</b> statt ${S(crafts * amount)} Stück.</div>`;
+  function planNote(city, focus, fs, nfCrafts, amount) {
+    const pc = (r) => C.fmtNum(r * 100) + " %";
+    let h = `<div class="plan-note">Gerechnet für: <b>Craften in ${city}</b> · <b>${focus ? "MIT Fokus" : "ohne Fokus"}</b>`;
+    if (!focus || !fs.cf) {
+      h += `<br>Im Spiel muss bei <b>„Ressourcen-Ertragsrate“</b> stehen: <b>${pc(fs.rrrN)}</b>`;
+      if (focus && !fs.cf) h += `<div class="neg" style="margin-top:4px">⚠ Dein Fokus (${S(myFocus())}) reicht für keinen Craft mit Fokus – alles ohne Fokus gerechnet.</div>`;
+    } else {
+      h += `<br>Im Spiel muss bei <b>„Ressourcen-Ertragsrate“</b> stehen: <b>${pc(fs.rrrF)}</b> mit Fokus`;
+      h += fs.cn ? `<div class="gold" style="margin-top:4px">Dein Fokus (${S(myFocus())}) reicht für <b>${S(fs.cf)} von ${S(fs.crafts)} Crafts</b> (${S(fs.cf * amount)} Stück, ${S(fs.cf * fs.fpc)} Fokus). ` +
+        `Die restlichen ${S(fs.cn)} Crafts sind <b>ohne Fokus</b> eingeplant (${pc(fs.rrrN)}). Im Spiel zuerst mit Fokus craften, dann ohne.</div>`
+        : `<br>Verbraucht <b>${S(fs.cf * fs.fpc)} Fokus</b> (du hast ${S(myFocus())}).`;
+      if (nfCrafts < fs.crafts) h += `<div class="neg" style="margin-top:4px">⚠ Ohne Fokus reicht dieser Einkauf nur für ca. <b>${S(nfCrafts * amount)}</b> statt ${S(fs.crafts * amount)} Stück.</div>`;
     }
-    h += `<div class="muted hint" style="margin-top:4px">Die Rückgabe der letzten Runde bleibt immer übrig (weniger als 1 Craft) – leg sie ins 📦 Lager, dann wird sie beim nächsten Mal mitgerechnet.</div></div>`;
+    h += `<div class="muted hint" style="margin-top:4px">Die Rückgabe der letzten Runde bleibt immer übrig (weniger als 1 Craft) – leg sie ins 📦 Lager.</div></div>`;
     return h;
   }
+
 
   function renderAlch() {
     const id = aId();
@@ -1124,7 +1134,7 @@
           it.buy > 0 ? el("button", { class: "icon-btn", title: "Als Kaufauftrag", on: { click: () => openOrder({ side: "buy", id: it.item, qty: it.buy, price: bp ? bp + 1 : it.price, loc: o.buyCity }) } }, "📑") : null)));
     });
     const sp = plan.directCost !== null && plan.buyCost !== null ? plan.directCost - plan.buyCost : null;
-    $("a-buy-info").innerHTML = planNote(o.city, o.focus, plan.rrr, plan.focusNeed, plan.noFocusCrafts, plan.crafts, rec.amount) +
+    $("a-buy-info").innerHTML = planNote(o.city, o.focus, C.focusSplit(settings, rec, plan.crafts, o), plan.noFocusCrafts, rec.amount) +
       (plan.buyCost === null ? "Noch nicht alle Preise vorhanden." :
       `Einkauf gesamt <b>${S(plan.buyCost)}</b> Silber` + (plan.stockValue ? ` · aus dem Lager: Wert ${S(plan.stockValue)}` : "") +
       (sp > 0 ? ` · <span class="pos">${S(sp)} günstiger</span> als alle Zutaten direkt zu kaufen (${S(plan.directCost)})` : "") +
@@ -1156,9 +1166,12 @@
     const crafts = C.craftsFor(rec, pieces);
     const { city, buy, sellLocs } = cCities(id);
     const bonus = C.productionBonus(settings, city, rec.cat, ui.cFocus, Number(ui.cDaily) || 0);
-    const rrr = C.returnRate(bonus);
+    const fs = C.focusSplit(settings, rec, crafts, { city, focus: ui.cFocus, daily: Number(ui.cDaily) || 0, focusAvail: myFocus(), fce: Number(ui.sFce) || 0 });
+    const rrr = fs.rrr;
     const kind = ui.cBuyMode === "instant" ? "sell" : "buy";
-    const plan = C.buyPlan(rec, crafts, rrr);
+    const sb = C.splitBuy(rec.res, fs);
+    const simL = C.jointSim(rec.res, sb, crafts, rrr).left;
+    const plan = rec.res.map(([pid, cnt, ret], i) => ({ id: pid, cnt, full: cnt * crafts, buy: sb[i], rest: simL[i], ret: !!ret }));
     const prices = {};
     let buyCost = 0, buyOk = true;
     for (const pl of plan) {
@@ -1178,7 +1191,7 @@
     const mode = best ? best.mode : (sellLocs[0] === C.BLACK_MARKET ? "instant" : ui.cSellMode);
     const res = C.calcCraft(rec, crafts, rrr, prices, best ? best.price : null, C.sellFee(settings, mode),
       Number(ui.cStation) || 0, ui.cFocus);
-    return { rec, pieces, crafts, city, buy, sellLocs, bonus, rrr, plan, buyCost: buyOk ? buyCost : null, best, mode, res,
+    return { rec, pieces, crafts, city, buy, sellLocs, bonus, rrr, plan, fs, buyCost: buyOk ? buyCost : null, best, mode, res,
       sellLoc: best ? best.loc : sellLocs[0] };
   }
 
@@ -1263,7 +1276,7 @@
     $("c-buy").options[0].textContent = "Wie Crafting-Stadt";
     $("c-sell").options[1].textContent = "Wie Crafting-Stadt";
     $("c-sellmode").value = ui.cSellMode; $("c-buymode").value = ui.cBuyMode;
-    $("c-daily").value = ui.cDaily; $("c-station").value = ui.cStation; $("c-focus").checked = ui.cFocus;
+    $("c-daily").value = ui.cDaily; $("c-station").value = ui.cStation; $("c-focus").checked = ui.cFocus; if (document.activeElement !== $("c-myfocus")) $("c-myfocus").value = myFocus();
   }
 
   function renderCraft() {
@@ -1285,9 +1298,9 @@
     box.innerHTML = "";
     {
       const nfR = C.returnRate(C.productionBonus(settings, k.city, rec.cat, false, Number(ui.cDaily) || 0));
-      const nf = ui.cFocus ? C.jointSim(rec.res, k.plan.map((p) => p.buy), k.crafts, nfR).done : k.crafts;
+      const nf = k.fs.cf ? C.jointSim(rec.res, k.plan.map((p) => p.buy), k.crafts, nfR).done : k.crafts;
       const d = document.createElement("div");
-      d.innerHTML = planNote(k.city, ui.cFocus, k.rrr, ui.cFocus ? rec.focus * k.crafts : 0, nf, k.crafts, rec.amount);
+      d.innerHTML = planNote(k.city, ui.cFocus, k.fs, nf, rec.amount);
       box.append(d.firstElementChild);
     }
     for (const pl of k.plan) {
@@ -1410,8 +1423,8 @@
     return { uid: uid(), at: Date.now(), src: "Crafting", id: ui.cItem, pieces: k.crafts * k.rec.amount, crafts: k.crafts,
       city: k.city, buyCity: k.buy, sellLoc: k.sellLoc, sellMode: k.mode, focus: !!ui.cFocus,
       mats: k.plan.map((pl) => mat(pl.id, pl.buy, pl.fromStock, pl.buyNet, pl.price, pl.cost, k.buy)), steps: [],
-      cost: k.buyCost, price: k.best ? k.best.price : null, rrr: k.rrr, focusNeed: ui.cFocus ? k.rec.focus * k.crafts : 0,
-      nfPieces: ui.cFocus ? C.jointSim(k.rec.res, k.plan.map((x) => x.buy), k.crafts,
+      cost: k.buyCost, price: k.best ? k.best.price : null, rrr: k.rrr, focusNeed: k.fs.cf * k.fs.fpc, focusCrafts: k.fs.cf, rrrF: k.fs.rrrF, rrrN: k.fs.rrrN,
+      nfPieces: k.fs.cf ? C.jointSim(k.rec.res, k.plan.map((x) => x.buy), k.crafts,
         C.returnRate(C.productionBonus(settings, k.city, k.rec.cat, false, Number(ui.cDaily) || 0))).done * k.rec.amount : null,
       revenue: k.res.complete ? k.res.revenue : null, profit: k.res.complete ? k.res.profit : null };
   }
@@ -1422,7 +1435,7 @@
     return { uid: uid(), at: Date.now(), src: "Tränke & Essen", id, pieces: plan.pieces, crafts: plan.crafts,
       city: o.city, buyCity: o.buyCity, sellLoc, sellMode: plan.best ? plan.best.mode : o.sellMode, focus: !!o.focus,
       mats: plan.buyList.map((it) => mat(it.item, it.qty, it.fromStock, it.buy, it.price, it.cost, o.buyCity)), steps,
-      rrr: plan.rrr, focusNeed: plan.focusNeed, nfPieces: plan.noFocusCrafts * plan.rec.amount,
+      rrr: plan.rrr, focusNeed: plan.focusNeed, focusCrafts: plan.focusCrafts, rrrF: plan.rrrF, rrrN: plan.rrrN, nfPieces: plan.noFocusCrafts * plan.rec.amount,
       cost: plan.buyCost, price: plan.best ? plan.best.price : null,
       revenue: plan.complete ? plan.res.revenue : null, profit: plan.complete ? plan.res.profit : null };
   }
@@ -1487,6 +1500,16 @@
     } catch (e) { /* abgebrochen */ }
   }
 
+  function projFocusNote(p) {
+    const pc = (r) => r === undefined || r === null ? "?" : C.fmtNum(r * 100) + " %";
+    const amt = gd.recipes[p.id] ? gd.recipes[p.id].amount : 1;
+    if (!p.focus || p.focusCrafts === 0) return el("div", { class: "small" }, `Im Spiel: „Ressourcen-Ertragsrate“ ${pc(p.rrrN !== undefined ? p.rrrN : p.rrr)}`);
+    const fc = p.focusCrafts !== undefined ? p.focusCrafts : p.crafts;
+    return el("div", { class: "small gold" },
+      `✦ ${S(fc)} von ${S(p.crafts)} Crafts MIT Fokus (${S(p.focusNeed)} Fokus, Ertragsrate ${pc(p.rrrF)})` +
+      (fc < p.crafts ? `, danach ${S(p.crafts - fc)} ohne Fokus (${pc(p.rrrN)})` : "") +
+      (p.nfPieces && p.nfPieces < p.pieces ? ` · ganz ohne Fokus nur ca. ${S(p.nfPieces)} Stück` : ""));
+  }
   function projectCard(p) {
     const buys = toBuy(p), done = buys.filter((m) => m.done).length;
     const ready = done === buys.length;
@@ -1499,8 +1522,7 @@
           el("div", { class: "proj-title" }, `${S(p.pieces)} × ${gd.label(p.id)}`),
           el("div", { class: "small muted" }, `aus ${p.src} · gespeichert ${fmtWhen(p.at)}`),
           el("div", { class: "small" }, `Craften in ${p.city}${p.focus ? " MIT Fokus" : " ohne Fokus"} · Einkauf in ${p.buyCity} · Verkauf in ${p.sellLoc}`),
-          p.focus ? el("div", { class: "small neg" }, `⚠ Nur mit Fokus${p.focusNeed ? " (" + S(p.focusNeed) + " Fokus)" : ""} in ${p.city} reicht das Material` +
-            (p.nfPieces && p.nfPieces < p.pieces ? ` – ohne Fokus nur für ca. ${S(p.nfPieces)} Stück.` : ".")) : null),
+          projFocusNote(p)),
         el("button", { class: "icon-btn", title: "Rezept löschen", on: { click: () => {
           if (confirm(`Rezept „${S(p.pieces)} × ${gd.label(p.id)}“ löschen?\n(Im Buch wird nichts eingetragen.)`)) { projects = projects.filter((x) => x !== p); saveProjects(); renderShop(); }
         } } }, "🗑")),
@@ -2646,6 +2668,8 @@
     $("es-run").addEventListener("click", esRun);
     [["es-route", "esRoute"], ["es-sellmode", "esSellMode"], ["es-vol", "esVol"], ["es-age", "esAge"], ["es-min", "esMin"]].forEach(([id, key]) =>
       $(id).addEventListener("change", (e) => { ui[key] = e.target.type === "number" ? Number(e.target.value) || 0 : e.target.value; saveUi(); esRender(); }));
+    $("a-myfocus").addEventListener("change", (e) => { ui.sFocus = Math.max(0, Number(e.target.value) || 0); saveUi(); renderAlch(); });
+    $("c-myfocus").addEventListener("change", (e) => { ui.sFocus = Math.max(0, Number(e.target.value) || 0); saveUi(); renderCraft(); });
     $("c-browse").addEventListener("click", () => { cBrowse = true; renderCraftSearch(); $("c-search").focus(); });
     $("a-browse").addEventListener("click", () => { aBrowse = true; renderAlchSearch(); $("a-search").focus(); });
     $("c-search").addEventListener("input", () => { clearTimeout(st); st = setTimeout(renderCraftSearch, 150); });

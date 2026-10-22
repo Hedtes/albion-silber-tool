@@ -517,6 +517,25 @@
     return res.map(([, c]) => c * crafts);
   }
 
+  /**
+   * Fokus aufteilen: so viele Crafts mit Fokus, wie dein verfügbarer Fokus reicht (o.focusAvail), den Rest ohne.
+   * o.focusAvail null/undefined = unbegrenzt.
+   */
+  function focusSplit(s, rec, crafts, o) {
+    const rrrF = returnRate(productionBonus(s, o.city, rec.cat, true, o.daily));
+    const rrrN = returnRate(productionBonus(s, o.city, rec.cat, false, o.daily));
+    const fpc = Math.max(1, focusCost(rec.focus || 0, o.fce || 0));
+    let cf = o.focus ? crafts : 0;
+    if (o.focus && o.focusAvail !== null && o.focusAvail !== undefined) cf = Math.min(crafts, Math.max(0, Math.floor(o.focusAvail / fpc)));
+    const cn = crafts - cf;
+    return { crafts, cf, cn, fpc, rrrF, rrrN, rrr: crafts ? (cf * rrrF + cn * rrrN) / crafts : rrrN };
+  }
+  /** Einkauf für den Fokus-Teil + den Rest ohne Fokus (im Spiel: erst mit Fokus craften, dann ohne). */
+  function splitBuy(res, fs) {
+    const a = jointBuy(res, fs.cf, fs.rrrF), b = jointBuy(res, fs.cn, fs.rrrN);
+    return res.map((_, i) => (a[i] || 0) + (b[i] || 0));
+  }
+
   /** Pro Zutat: was du kaufen musst, damit am Ende (fast) nichts übrig bleibt. */
   function buyPlan(recipe, crafts, rrr) {
     const buys = jointBuy(recipe.res, crafts, rrr);
@@ -755,12 +774,13 @@
     if (!rec) return null;
     const stock = o.stock || {};
     const crafts = craftsFor(rec, pieces);
-    const rrr = returnRate(productionBonus(s, o.city, rec.cat, o.focus, o.daily));
+    const fs = focusSplit(s, rec, crafts, o);
+    const rrr = fs.rrr;
     const best = bestSale(store, s, id, o.sellLocs, o.sellMode, o.maxAge);
 
     function run(override) {
       const solver = makeSolver(gd, store, s, Object.assign({}, o, { stock, override }));
-      const jb = jointBuy(rec.res, crafts, rrr);
+      const jb = splitBuy(rec.res, fs);
       const ings = rec.res.map(([rid, cnt, ret], i) => {
         const node = solver.cheapest(rid, 0);
         const qty = jb[i];
@@ -808,10 +828,9 @@
       id, rec, crafts, pieces: crafts * rec.amount, rrr, ings: r.ings, res, best, complete: r.complete && !!best,
       buyList, steps: r.out.steps, buyCost, stockValue, directCost: directOk ? directCost : null, solver: r.solver,
       unitCost: r.complete ? res.cost / (crafts * rec.amount) : null,
-      focusNeed: o.focus ? rec.focus * crafts : 0,
+      focusNeed: fs.cf * fs.fpc, focusFull: o.focus ? crafts * fs.fpc : 0, focusCrafts: fs.cf, rrrF: fs.rrrF, rrrN: fs.rrrN,
       // Wie viele Crafts gehen mit diesem Einkauf OHNE Fokus? (Warnung, falls Fokus fehlt)
-      noFocusCrafts: o.focus ? jointSim(rec.res, r.ings.map((x) => x.qty), crafts,
-        returnRate(productionBonus(s, o.city, rec.cat, false, o.daily))).done : crafts,
+      noFocusCrafts: fs.cf ? jointSim(rec.res, r.ings.map((x) => x.qty), crafts, fs.rrrN).done : crafts,
     };
   }
 
@@ -821,7 +840,7 @@
     parseDate, ageHours, fmtAge, fmtSilver, fmtNum, ceilInt,
     GameData, PriceStore, bonusCityFor, productionBonus, returnRate, focusCost,
     salesTax, sellFee, buyUnitCost, salePrice, bestSale, volumeOk, calcCraft,
-    refineTable, needs, refineAmount, refineDetail, simulate, buyAmount, jointSim, jointBuy, buyPlan, craftsFor,
+    refineTable, needs, refineAmount, refineDetail, simulate, buyAmount, jointSim, jointBuy, focusSplit, splitBuy, buyPlan, craftsFor,
     evalCraft, upfrontCost, planSilver, makeSolver, cheapPlan,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = Core;

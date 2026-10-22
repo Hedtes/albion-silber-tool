@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const C = window.Core;
-  const VERSION = "1.9.2";
+  const VERSION = "1.9.3";
   const $ = (id) => document.getElementById(id);
   const S = C.fmtSilver;
   const SLOW_DAYS = 7;
@@ -2292,12 +2292,17 @@
     const fee = Math.max(0, Number(ui.eFee) || 0);
     const mats = [1, 2, 3].map((l) => { const id = `T${inf.tier}_${ENCH_MAT[l - 1]}`; return Object.assign({ id, n: inf.n, lvl: l }, unit(id, k.buy)); });
     const upg = (s, t) => { let c = 0; for (let l = s + 1; l <= t; l++) { const m = mats[l - 1]; if (m.p === null) return null; c += m.p * inf.n + fee; } return c; };
-    const craftEach = {}, buyEach = {};
+    const craftEach = {}, buyEach = {}, craftMissing = {}, buyAvg = {};
     for (let l = 0; l <= 3; l++) {
       const id = enchId(inf.base, l);
       buyEach[l] = gd.recipes[id] || l === 0 ? unit(id, k.buy).p : null;
-      craftEach[l] = null;
-      if (gd.recipes[id]) { const kk = id === ui.cItem ? k : craftCalc(id); if (kk && !kk.res.missing.length) craftEach[l] = kk.res.cost / Math.max(1, kk.res.produced); }
+      const stt = store.stats(id, k.buy); buyAvg[l] = stt ? stt.avg : null;
+      craftEach[l] = null; craftMissing[l] = [];
+      if (gd.recipes[id]) {
+        const kk = id === ui.cItem ? k : craftCalc(id);
+        if (kk && !kk.res.missing.length) craftEach[l] = kk.res.cost / Math.max(1, kk.res.produced);
+        else if (kk) craftMissing[l] = kk.res.missing.map((mid) => ({ id: mid, qty: (kk.plan.find((p) => p.id === mid) || {}).buyNet || 1 }));
+      }
     }
     const targets = [];
     for (let t = 1; t <= 3; t++) {
@@ -2311,13 +2316,20 @@
           const label = s === t ? (how === "craft" ? `Direkt T${inf.tier}.${t} craften` : `Fertig kaufen`)
             : `T${inf.tier}.${s} ${how === "craft" ? "craften" : "kaufen"} + ${t - s}× verzaubern`;
           const cost = srcCost === null || (s < t && u === null) ? null : srcCost + (s < t ? u : 0);
-          routes.push({ s, how, label, cost, upg: s < t ? u : 0, profit: cost !== null && saleNet !== null ? saleNet - cost : null });
+          // Ausreißer: Kaufpreis viel billiger als der Durchschnitt oder als der Verkaufserlös → prüfen
+          const avg = buyAvg[s];
+          const odd = how === "buy" && srcCost !== null && !store.isManual(enchId(inf.base, s), k.buy, kind) &&
+            ((avg && srcCost < avg * 0.4) || (saleNet && s === t && srcCost < saleNet * 0.25));
+          routes.push({ s, how, label, cost, upg: s < t ? u : 0, item: enchId(inf.base, s), odd, avg,
+            missing: how === "craft" ? (srcCost === null ? craftMissing[s] : []) : (srcCost === null ? [{ id: enchId(inf.base, s), qty: pieces }] : []),
+            upgMissing: s < t && u === null,
+            profit: cost !== null && saleNet !== null ? saleNet - cost : null });
         };
         mk("craft", craftEach[s]);
         mk("buy", buyEach[s]);
       }
       const direct = routes.find((r) => r.s === t && r.how === "craft");
-      const priced = routes.filter((r) => r.cost !== null).sort((a, b) => a.cost - b.cost);
+      const priced = routes.filter((r) => r.cost !== null && !r.odd).sort((a, b) => a.cost - b.cost);
       targets.push({ t, tid, best, saleNet, routes, direct, cheapest: priced[0] || null });
     }
     return Object.assign({}, inf, { pieces, mats, targets, kind });
@@ -2362,16 +2374,31 @@
         ch.profit !== null ? el("div", { class: "small " + cls(ch.profit) }, `Gewinn: ${pm(ch.profit)} pro Stück · ${pm(ch.profit * e.pieces)} gesamt`) : null));
       else card.append(el("div", { class: "small muted", style: "margin:6px 0" }, "Noch keine Preise – oben „⟳ Live-Preise laden“."));
       const tbl = el("table", { class: "res num ench-routes" });
-      tbl.append(el("tr", {}, el("th", {}, "Weg"), el("th", {}, "Kosten/Stk"), el("th", {}, "Gewinn/Stk"), el("th", {}, "ggü. direkt")));
+      tbl.append(el("tr", {}, el("th", {}, "Weg"), el("th", {}, "Kosten/Stk"), el("th", {}, "Gewinn/Stk"), el("th", {}, "ggü. direkt"), el("th", {}, "")));
       tg.routes.slice().sort((a, b) => (a.cost === null) - (b.cost === null) || (a.cost || 0) - (b.cost || 0)).forEach((r) => {
         const d = r.cost !== null && dir && dir.cost !== null && r !== dir ? dir.cost - r.cost : null;
         tbl.append(el("tr", { class: r === ch ? "key sel" : "" },
           el("td", { style: "text-align:left" }, (r === ch ? "✔ " : "") + r.label),
           el("td", {}, r.cost === null ? "Preis fehlt" : S(r.cost)),
           el("td", { class: cls(r.profit) }, pm(r.profit)),
-          el("td", { class: cls(d) }, r === dir ? "—" : d === null ? "–" : pm(d))));
+          el("td", { class: cls(d) }, r === dir ? "—" : d === null ? "–" : pm(d)),
+          el("td", {}, r.how === "buy" ? el("button", { class: "icon-btn sm", title: "Kaufpreis eintragen",
+            on: { click: () => aEditPrice(r.item, k.buy, e.kind, null, renderCraft, e.pieces) } }, "✎") : null)));
+        if (r.odd) tbl.append(el("tr", {}, el("td", { colspan: 5, class: "small warn", style: "text-align:left;padding-top:0" },
+          `⚠ Auffällig billig${r.avg ? " (Ø " + S(r.avg) + ")" : ""} – vermutlich ein Ausreißer in den Marktdaten. Mit ✎ prüfen/eintragen; wird nicht als „billigster Weg“ gezählt.`)));
       });
       card.append(tbl);
+      // Fehlende Preise direkt hier eintragen
+      const miss = new Map();
+      tg.routes.forEach((r) => r.missing.forEach((m) => { if (!miss.has(m.id)) miss.set(m.id, m.qty); }));
+      if (tg.routes.some((r) => r.upgMissing)) [1, 2, 3].forEach((l) => { const m = e.mats[l - 1]; if (l <= tg.t && m.p === null && !miss.has(m.id)) miss.set(m.id, m.n * e.pieces); });
+      if (miss.size) {
+        const mb = el("div", { class: "miss-box" }, el("div", { class: "small", style: "font-weight:700;margin-bottom:4px" }, `⚠ ${miss.size} Preis(e) fehlen – hier eintragen:`));
+        for (const [mid, q] of miss) mb.append(el("div", { class: "miss-row" },
+          el("span", {}, gd.label(mid)),
+          el("button", { class: "btn", on: { click: () => aEditPrice(mid, k.buy, e.kind, null, renderCraft, q) } }, "✎ Preis")));
+        card.append(mb);
+      }
       if (ch && ch.cost !== null) card.append(el("button", { class: "btn block", style: "margin-top:8px",
         on: { click: () => { if (logCraft({ id: tg.tid, pieces: e.pieces, cost: Math.round(ch.cost * e.pieces),
           expected: tg.saleNet !== null ? Math.round(tg.saleNet * e.pieces) : null, where: `${ch.label} · ${k.buy}`,

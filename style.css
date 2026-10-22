@@ -323,3 +323,8 @@ table.ench-routes th { text-align: right; color: var(--muted); font-weight: 600;
 table.ench-routes th:first-child { text-align: left; }
 table.ench-routes td { padding: 5px 4px; }
 table.ench-routes tr.sel td { color: var(--gold-lt); }
+
+.miss-box { background: var(--neg-bg); border: 1px dashed rgba(239,106,92,.5); border-radius: 10px; padding: 8px 10px; margin-top: 8px; }
+.miss-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 4px 0; font-size: 13px; }
+.miss-row .btn { padding: 6px 10px; font-size: 12.5px; }
+.warn { color: #f0b85a; }

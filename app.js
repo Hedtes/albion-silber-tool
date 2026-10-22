@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const C = window.Core;
-  const VERSION = "1.8.5";
+  const VERSION = "1.8.6";
   const $ = (id) => document.getElementById(id);
   const S = C.fmtSilver;
   const SLOW_DAYS = 7;
@@ -993,7 +993,7 @@
     const isShred = node.alt.res.length === 1 && node.alt.amount > 1;
     const srcQty = isShred ? jb[0] : 0;
     lines.push(el("div", { class: "step" }, isShred
-      ? `${S(srcQty)} × ${gd.label(node.alt.res[0][0])} ${node.item === "T1_FISHCHOPS" ? "zerkleinern" : "schreddern"} → ${S(crafts * node.alt.amount)} × ${gd.label(node.item)} (je ${node.alt.amount}${node.alt.res[0][2] ? ", mit Rückgabe" : ""})`
+      ? `${S(srcQty)} × ${gd.label(node.alt.res[0][0])} ${node.item === "T1_FISHCHOPS" ? "zerkleinern" : "schreddern"} → ${S(crafts * node.alt.amount)} × ${gd.label(node.item)} (je ${node.alt.amount}${node.rrr > 0 ? ", mit Rückgabe" : ", ohne Rückgabe"})`
       : `${S(crafts * node.alt.amount)} × ${gd.label(node.item)} herstellen aus ${parts.join(" + ")}`));
     // Alternativen bei Umwandlungen zeigen
     const alts = alchData.alts[node.item] || [];

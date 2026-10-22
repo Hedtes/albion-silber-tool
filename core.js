@@ -735,7 +735,8 @@
       let best = m ? { item, unit: m.price, how: "buy", market: m.price, src: m.src, ts: m.ts } : null;
       if ((depth || 0) < 5) {
         for (const alt of altsOf(item)) {
-          const rrr = returnRate(productionBonus(s, ctx.city, alt.cat || "none", false, 0));
+          // Umwandlungen (Fisch zerkleinern, Fischsauce, Tierteile schreddern, Extrakt) geben im Spiel nichts zurück: 0 %
+          const rrr = alt.cat ? returnRate(productionBonus(s, ctx.city, alt.cat, false, 0)) : 0;
           let total = 0, ok = true;
           const children = [];
           for (const [rid, cnt, ret] of alt.res) {

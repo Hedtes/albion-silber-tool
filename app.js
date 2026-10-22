@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const C = window.Core;
-  const VERSION = "1.9.1";
+  const VERSION = "1.9.2";
   const $ = (id) => document.getElementById(id);
   const S = C.fmtSilver;
   const SLOW_DAYS = 7;
@@ -1338,11 +1338,12 @@
     if (jf) jobs.push([[jf[0] + "_FULL", jf[0] + "_EMPTY"], [k.city]]);
     const ei = enchInfo(ui.cItem);
     if (ei) {
-      const lv = [1, 2, 3].filter((l) => l > ei.from);
-      const tids = lv.map((l) => enchId(ei.base, l));
-      const emats = lv.map((l) => `T${ei.tier}_${ENCH_MAT[l - 1]}`);
-      const tres = [...new Set(tids.flatMap((t) => gd.recipes[t] ? gd.recipes[t].res.map((x) => x[0]) : []))];
-      jobs.push([emats.concat(tids, [ui.cItem], tres), [k.buy]], [tids, k.sellLocs], [tids, k.sellLocs, "history"], [emats, [k.buy], "history"]);
+      const fam = [0, 1, 2, 3].map((l) => enchId(ei.base, l));
+      const emats = [1, 2, 3].map((l) => `T${ei.tier}_${ENCH_MAT[l - 1]}`);
+      const tres = new Set();
+      fam.forEach((t) => { if (gd.recipes[t]) gd.recipes[t].res.forEach(([rid]) => { tres.add(rid); addChain(rid, 0); }); });
+      mats.forEach((m) => tres.add(m));
+      jobs.push([emats.concat(fam, [...tres]), [k.buy]], [fam, k.sellLocs], [fam, k.sellLocs, "history"], [emats, [k.buy], "history"]);
     }
     runJobs(jobs, () => render());
   }
@@ -2272,9 +2273,13 @@
   function enchInfo(id) {
     if (!id || !gd) return null;
     const base = id.split("@")[0], r = gd.recipes[id], n = enchData.c[base];
-    if (!n || !r || r.ench >= 3) return null;
+    if (!n || !r) return null;
     return { base, n, from: r.ench, tier: r.tier };
   }
+  /**
+   * Verzauber-Rechner: für jede Stufe .1–.3 alle Wege vergleichen –
+   * direkt craften, niedrigere Stufe craften/kaufen + hochverzaubern, fertig kaufen.
+   */
   function enchantCalc(k) {
     const inf = enchInfo(ui.cItem);
     if (!inf) return null;
@@ -2284,32 +2289,38 @@
       const [p, src, ts] = store.get(item, loc, kind);
       return { p: (p !== null && src !== "alt") || src === "manuell" ? C.buyUnitCost(settings, p, ui.cBuyMode) : null, src, ts };
     };
-    const own = k.res.missing.length ? null : k.res.cost / Math.max(1, k.res.produced);
-    const bought = unit(ui.cItem, k.buy);
-    const src = ui.eSrc === "buy" || (ui.eSrc !== "craft" && own === null) ? "buy" : "craft";
-    const baseCost = src === "buy" ? bought.p : own;
-    const baseSaleNet = k.best ? k.best.price * (1 - C.sellFee(settings, k.mode)) : null;
     const fee = Math.max(0, Number(ui.eFee) || 0);
-    const mats = [], steps = [];
-    let up = 0, upOk = true;
-    for (let l = inf.from + 1; l <= 3; l++) {
-      const mid = `T${inf.tier}_${ENCH_MAT[l - 1]}`;
-      const u = unit(mid, k.buy);
-      mats.push(Object.assign({ id: mid, n: inf.n, lvl: l }, u));
-      if (u.p === null) upOk = false; else up += u.p * inf.n + fee;
-      const tid = enchId(inf.base, l);
+    const mats = [1, 2, 3].map((l) => { const id = `T${inf.tier}_${ENCH_MAT[l - 1]}`; return Object.assign({ id, n: inf.n, lvl: l }, unit(id, k.buy)); });
+    const upg = (s, t) => { let c = 0; for (let l = s + 1; l <= t; l++) { const m = mats[l - 1]; if (m.p === null) return null; c += m.p * inf.n + fee; } return c; };
+    const craftEach = {}, buyEach = {};
+    for (let l = 0; l <= 3; l++) {
+      const id = enchId(inf.base, l);
+      buyEach[l] = gd.recipes[id] || l === 0 ? unit(id, k.buy).p : null;
+      craftEach[l] = null;
+      if (gd.recipes[id]) { const kk = id === ui.cItem ? k : craftCalc(id); if (kk && !kk.res.missing.length) craftEach[l] = kk.res.cost / Math.max(1, kk.res.produced); }
+    }
+    const targets = [];
+    for (let t = 1; t <= 3; t++) {
+      const tid = enchId(inf.base, t);
       const best = C.bestSale(store, settings, tid, k.sellLocs, ui.cSellMode);
       const saleNet = best ? best.price * (1 - C.sellFee(settings, best.mode)) : null;
-      const upEach = upOk ? up : null;
-      const costEach = upEach !== null && baseCost !== null ? baseCost + upEach : null;
-      let craftEach = null;
-      if (gd.recipes[tid]) { const kk = craftCalc(tid); if (kk && !kk.res.missing.length) craftEach = kk.res.cost / Math.max(1, kk.res.produced); }
-      const direct = unit(tid, k.buy).p;
-      steps.push({ l, tid, best, saleNet, upEach, costEach, craftEach, direct,
-        profitEach: costEach !== null && saleNet !== null ? saleNet - costEach : null,
-        extraEach: upEach !== null && saleNet !== null && baseSaleNet !== null ? saleNet - upEach - baseSaleNet : null });
+      const routes = [];
+      for (let s = 0; s <= t; s++) {
+        const u = upg(s, t);
+        const mk = (how, srcCost) => {
+          const label = s === t ? (how === "craft" ? `Direkt T${inf.tier}.${t} craften` : `Fertig kaufen`)
+            : `T${inf.tier}.${s} ${how === "craft" ? "craften" : "kaufen"} + ${t - s}× verzaubern`;
+          const cost = srcCost === null || (s < t && u === null) ? null : srcCost + (s < t ? u : 0);
+          routes.push({ s, how, label, cost, upg: s < t ? u : 0, profit: cost !== null && saleNet !== null ? saleNet - cost : null });
+        };
+        mk("craft", craftEach[s]);
+        mk("buy", buyEach[s]);
+      }
+      const direct = routes.find((r) => r.s === t && r.how === "craft");
+      const priced = routes.filter((r) => r.cost !== null).sort((a, b) => a.cost - b.cost);
+      targets.push({ t, tid, best, saleNet, routes, direct, cheapest: priced[0] || null });
     }
-    return Object.assign({}, inf, { pieces, own, bought, src, baseCost, baseSaleNet, mats, steps, kind });
+    return Object.assign({}, inf, { pieces, mats, targets, kind });
   }
 
   function renderEnchant(k) {
@@ -2318,78 +2329,58 @@
     if (!e) { box.style.display = "none"; return; }
     box.style.display = "";
     box.innerHTML = "";
-    const t = (l) => `T${e.tier}.${l}`;
+    const T = (l) => `T${e.tier}.${l}`;
     const pm = (v) => v === null ? "–" : (v > 0 ? "+" : "") + S(v);
     const cls = (v) => v === null ? "" : v > 0 ? "pos" : "neg";
-    const segBtn = (val, label) => el("button", { class: e.src === val ? "on" : "", on: { click: () => { ui.eSrc = val; saveUi(); renderCraft(); } } }, label);
     const feeInp = el("input", { type: "number", inputMode: "numeric", value: ui.eFee || "", placeholder: "0",
       on: { change: () => { ui.eFee = Number(feeInp.value) || 0; saveUi(); renderCraft(); } } });
     box.append(
-      el("b", {}, `✨ Verzaubern: lohnt sich ${t(e.from)} → höher?`),
+      el("b", {}, `✨ Verzauber-Rechner: ${gd.name(e.base)} T${e.tier}`),
       el("div", { class: "small muted", style: "margin:2px 0 8px" },
-        `Pro Stück und Stufe ${S(e.n)} ${ENCH_WORD.slice(e.from).join(" / ")} · an der Artefaktschmiede · Qualität bleibt gleich · gerechnet für ${S(e.pieces)} Stück (MENGE oben)`),
-      el("div", { class: "small", style: "margin-bottom:4px" }, `Woher kommt dein ${t(e.from)}-Item?`),
-      el("div", { class: "seg", style: "margin-bottom:8px" },
-        segBtn("craft", `⚒ Selbst gecraftet · ${e.own === null ? "Preise fehlen" : S(e.own)}`), segBtn("buy", `🛒 Gekauft · ${S(e.bought.p)}`)),
-      el("div", { class: "row", style: "justify-content:space-between;gap:8px" },
-        el("div", { class: "small muted" }, `Einkauf in ${k.buy}${e.src === "buy" ? "" : " · Craftkosten aus dem Rechner oben"}`),
-        e.src === "buy" ? el("button", { class: "icon-btn", on: { click: () => aEditPrice(ui.cItem, k.buy, e.kind, null, renderCraft, e.pieces) } }, "✎") : null),
-    );
-    // Material-Preise
+        `Vergleicht für jede Stufe alle Wege – direkt craften, niedrigere Stufe craften oder kaufen und hochverzaubern, fertig kaufen. ` +
+        `${S(e.n)} Runen / Seelen / Relikte pro Stück und Stufe · gerechnet für ${S(e.pieces)} Stück (MENGE oben) · Einkauf in ${k.buy}.`));
     for (const m of e.mats) box.append(el("div", { class: "price" },
       el("div", { class: "t" }, el("div", { class: "n" }, gd.label(m.id)),
-        el("div", { class: "small muted" }, `${t(m.lvl - 1)} → ${t(m.lvl)} · ${S(m.n)} pro Stück · `,
-          el("span", { class: "src " + (m.src || "fehlt") }, `${m.src || "fehlt"}${m.ts ? " · " + C.fmtAge(m.ts) : ""}`)),
-        trend(m.id, k.buy, m.p, "buy")),
+        el("div", { class: "small muted" }, `${T(m.lvl - 1)} → ${T(m.lvl)} · ${S(m.n)} pro Stück · `,
+          el("span", { class: "src " + (m.src || "fehlt") }, `${m.src || "fehlt"}${m.ts ? " · " + C.fmtAge(m.ts) : ""}`))),
       el("div", { style: "text-align:right" }, el("div", { class: "small muted" }, "Stückpreis"), el("div", { class: "v num" }, S(m.p))),
       el("button", { class: "icon-btn", on: { click: () => aEditPrice(m.id, k.buy, e.kind, null, renderCraft, m.n * e.pieces) } }, "✎")));
     box.append(el("div", { class: "field", style: "margin-top:8px" }, el("label", {}, "Gebühr pro Stück und Stufe (falls die Schmiede etwas kostet)"), feeInp));
 
-    // Ergebnis je Zielstufe
-    for (const st of e.steps) {
-      const mode = st.best ? st.best.mode : ui.cSellMode;
-      const loc = st.best ? st.best.loc : k.sellLocs[0];
-      const ways = [["Selbst verzaubern", st.costEach], ["Fertig kaufen", st.direct], [`Direkt ${t(st.l)} craften`, st.craftEach]].filter((w) => w[1] !== null);
-      const cheapest = ways.length ? ways.reduce((a, b) => (b[1] < a[1] ? b : a)) : null;
-      const good = st.extraEach !== null && st.extraEach > 0 && (st.profitEach === null || st.profitEach > 0);
-      const bad = st.extraEach !== null && st.extraEach <= 0;
-      const card = el("div", { class: "ench-step " + (good ? "good" : bad ? "bad" : "") });
-      card.append(
-        el("div", { class: "row", style: "justify-content:space-between" },
-          el("b", {}, `${t(e.from)} → ${t(st.l)}`),
-          el("span", { class: "small " + (good ? "pos" : bad ? "neg" : "muted") },
-            st.extraEach === null ? "Preise fehlen" : good ? "✔ lohnt sich" : bad ? "✘ lohnt sich nicht" : "⚠ nur mit Verlust")),
-        el("div", { class: "price" },
-          el("div", { class: "t" }, el("div", { class: "n" }, `Verkauf ${t(st.l)}`),
-            el("div", { class: "small muted" }, `${loc}${mode === "instant" ? " · Sofortverkauf" : ""} · Verkäufe/Tag ${st.best && st.best.info && st.best.info.per_day != null ? C.fmtNum(st.best.info.per_day, st.best.info.per_day < 10 ? 1 : 0) : "?"}`),
-            trend(st.tid, loc, st.best ? st.best.price : null, "sell")),
-          el("div", { class: "v num" }, S(st.best ? st.best.price : null)),
-          el("button", { class: "icon-btn", on: { click: () => aEditPrice(st.tid, loc, mode === "instant" ? "buy" : "sell", null, renderCraft, e.pieces) } }, "✎")),
-      );
-      const tbl = el("table", { class: "res num" });
-      [
-        ["Verzaubern kostet / Stk", S(st.upEach)],
-        [`+ ${t(e.from)}-Item / Stk`, S(e.baseCost)],
-        ["= Kosten / Stk", S(st.costEach), true],
-        ["Erlös nach Steuer / Stk", S(st.saleNet)],
-        ["Gewinn / Stk", pm(st.profitEach), true, cls(st.profitEach)],
-        [`Gewinn gesamt (${S(e.pieces)} Stk)`, st.profitEach === null ? "–" : pm(st.profitEach * e.pieces), true, cls(st.profitEach)],
-        [`Mehr als ${t(e.from)} direkt verkaufen`, st.extraEach === null ? "–" : pm(st.extraEach) + " / Stk", false, cls(st.extraEach)],
-        [`… gesamt`, st.extraEach === null ? "–" : pm(st.extraEach * e.pieces), false, cls(st.extraEach)],
-      ].forEach(([l, v, key, c]) => tbl.append(el("tr", { class: key ? "key" : "" }, el("td", {}, l), el("td", { class: c || "" }, v))));
+    for (const tg of e.targets) {
+      const loc = tg.best ? tg.best.loc : k.sellLocs[0];
+      const mode = tg.best ? tg.best.mode : ui.cSellMode;
+      const ch = tg.cheapest, dir = tg.direct;
+      const save = ch && dir && dir.cost !== null ? dir.cost - ch.cost : null;
+      const card = el("div", { class: "ench-step " + (ch && ch.profit !== null ? (ch.profit > 0 ? "good" : "bad") : "") });
+      card.append(el("div", { class: "row", style: "justify-content:space-between" },
+        el("b", {}, `Ziel: ${gd.name(e.base)} ${T(tg.t)}`),
+        el("span", { class: "small" }, "Verkauf ", el("b", {}, S(tg.best ? tg.best.price : null)), ` in ${loc}`,
+          el("button", { class: "icon-btn sm", style: "margin-left:6px", on: { click: () => aEditPrice(tg.tid, loc, mode === "instant" ? "buy" : "sell", null, renderCraft, e.pieces) } }, "✎"))));
+      if (ch) card.append(el("div", { class: "ench-best" }, "✔ Billigster Weg: ", el("b", {}, ch.label), ` – ${S(ch.cost)} pro Stück`,
+        save !== null && save > 0 ? el("div", { class: "pos small" }, `spart ${S(save)} pro Stück (${S(save * e.pieces)} bei ${S(e.pieces)} Stück) gegenüber direkt ${T(tg.t)} craften`) : null,
+        ch.profit !== null ? el("div", { class: "small " + cls(ch.profit) }, `Gewinn: ${pm(ch.profit)} pro Stück · ${pm(ch.profit * e.pieces)} gesamt`) : null));
+      else card.append(el("div", { class: "small muted", style: "margin:6px 0" }, "Noch keine Preise – oben „⟳ Live-Preise laden“."));
+      const tbl = el("table", { class: "res num ench-routes" });
+      tbl.append(el("tr", {}, el("th", {}, "Weg"), el("th", {}, "Kosten/Stk"), el("th", {}, "Gewinn/Stk"), el("th", {}, "ggü. direkt")));
+      tg.routes.slice().sort((a, b) => (a.cost === null) - (b.cost === null) || (a.cost || 0) - (b.cost || 0)).forEach((r) => {
+        const d = r.cost !== null && dir && dir.cost !== null && r !== dir ? dir.cost - r.cost : null;
+        tbl.append(el("tr", { class: r === ch ? "key sel" : "" },
+          el("td", { style: "text-align:left" }, (r === ch ? "✔ " : "") + r.label),
+          el("td", {}, r.cost === null ? "Preis fehlt" : S(r.cost)),
+          el("td", { class: cls(r.profit) }, pm(r.profit)),
+          el("td", { class: cls(d) }, r === dir ? "—" : d === null ? "–" : pm(d))));
+      });
       card.append(tbl);
-      if (ways.length > 1) card.append(el("div", { class: "small", style: "margin-top:6px" },
-        `Günstigster Weg zu ${t(st.l)}: `, el("b", { class: "gold" }, `${cheapest[0]} (${S(cheapest[1])}/Stk)`),
-        el("div", { class: "small muted" }, ways.map((w) => `${w[0]} ${S(w[1])}`).join(" · "))));
-      if (st.costEach !== null) card.append(el("button", { class: "btn block", style: "margin-top:8px",
-        on: { click: () => { if (logCraft({ id: st.tid, pieces: e.pieces, cost: Math.round(st.costEach * e.pieces),
-          expected: st.saleNet !== null ? Math.round(st.saleNet * e.pieces) : null, where: k.buy,
-          price: st.best ? st.best.price : null, loc, mode })) renderBook && renderBook(); } } },
-        `✔ ${S(e.pieces)} × auf ${t(st.l)} verzaubert – ins Buch`));
+      if (ch && ch.cost !== null) card.append(el("button", { class: "btn block", style: "margin-top:8px",
+        on: { click: () => { if (logCraft({ id: tg.tid, pieces: e.pieces, cost: Math.round(ch.cost * e.pieces),
+          expected: tg.saleNet !== null ? Math.round(tg.saleNet * e.pieces) : null, where: `${ch.label} · ${k.buy}`,
+          price: tg.best ? tg.best.price : null, loc, mode })) renderBook(); } } },
+        `✔ ${S(e.pieces)} × ${T(tg.t)} so hergestellt – ins Buch`));
       box.append(card);
     }
-    box.append(el("div", { class: "small muted", style: "margin-top:6px" },
-      `„Mehr als direkt verkaufen“ vergleicht mit dem Verkauf deines ${t(e.from)}-Items zum Preis oben. Ist der Wert positiv, bringt das Verzaubern zusätzliches Silber.`));
+    box.append(el("div", { class: "small muted hint", style: "margin-top:6px" },
+      "„Craften“ nutzt deine Einstellungen aus „Herstellen“ (Stadt, Fokus, Kette). „Kaufen“ = Sofortkauf in der Einkaufsstadt. Verzaubern behält die Qualität."));
   }
 
   // ------------------------------------------------------------ Verzauber-Scan

@@ -315,3 +315,11 @@ details.chain-wrap summary { cursor: pointer; }
 
 .ctabs { margin: 0 0 10px; }
 .ctabs button { font-size: 13.5px; padding: 9px 4px; }
+
+.ench-best { background: var(--pos-bg); border-radius: 10px; padding: 8px 10px; margin: 8px 0; font-size: 13.5px; }
+.ench-step.bad .ench-best { background: var(--neg-bg); }
+table.ench-routes { font-size: 12.5px; }
+table.ench-routes th { text-align: right; color: var(--muted); font-weight: 600; font-size: 11px; padding: 4px 4px; }
+table.ench-routes th:first-child { text-align: left; }
+table.ench-routes td { padding: 5px 4px; }
+table.ench-routes tr.sel td { color: var(--gold-lt); }

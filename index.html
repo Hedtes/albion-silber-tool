@@ -13,7 +13,7 @@
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="icon" type="image/png" href="icons/icon-64.png">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="stylesheet" href="style.css?v=1.8.8">
+<link rel="stylesheet" href="style.css?v=1.9.0">
 </head>
 <body>
 <header class="top">
@@ -61,7 +61,7 @@
           <div class="field"><label>Max. Anteil am Markt % <span class="muted small">(von den Verkäufen/Tag)</span></label><input id="s-share" type="number" inputmode="decimal" value="20"></div>
           <div class="field"><label>Max. Preisalter (Stunden)</label><input id="s-age" type="number" inputmode="decimal" value="6"></div>
           <div class="full"><label class="toggle"><span>✨ Verzaubern mitprüfen (Runen/Seelen/Relikte)</span><input type="checkbox" id="s-enchup"></label></div>
-          <div class="full"><label class="toggle"><span>Ganze Kette: Barren/Planken selbst refinen, wenn günstiger <span class="muted small">(★)</span></span><input type="checkbox" id="s-chain"></label></div>
+          <div class="full"><label class="toggle"><span>★ Kette: Barren/Planken/Leder vorher selbst refinen, wenn billiger <span class="muted small">(★)</span></span><input type="checkbox" id="s-chain"></label></div>
         </div>
       </details>
     </div>
@@ -189,6 +189,7 @@
             <div class="field"><label>Einkaufsart</label><select id="a-buymode">
               <option value="instant">Sofortkauf</option><option value="order">Kaufauftrag</option></select></div>
             <div class="field"><label>Tagesbonus %</label><input id="a-daily" type="number" inputmode="decimal" value="0"></div>
+            <div class="full"><label class="toggle"><span>Zwischenprodukte selbst herstellen, wenn billiger <span class="muted small">(Extrakt, Fischsauce, Zerkleinern …)</span></span><input type="checkbox" id="a-self"></label></div>
             <div class="full"><label class="toggle"><span>Mit Fokus craften</span><input type="checkbox" id="a-focus"></label></div>
             <div class="field"><label>Dein Fokus (verfügbar)</label><input id="a-myfocus" type="number" inputmode="numeric"></div>
           </div>
@@ -507,7 +508,7 @@
 <div class="toast note" id="note"><span id="note-text"></span><button id="note-btn">Ansehen</button></div>
 <div class="toast" id="toast"><span id="toast-text"></span><button id="toast-btn">Neu laden</button></div>
 
-<script src="core.js?v=1.8.8"></script>
-<script src="app.js?v=1.8.8"></script>
+<script src="core.js?v=1.9.0"></script>
+<script src="app.js?v=1.9.0"></script>
 </body>
 </html>

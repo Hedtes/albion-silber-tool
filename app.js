@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const C = window.Core;
-  const VERSION = "1.8.8";
+  const VERSION = "1.9.0";
   const $ = (id) => document.getElementById(id);
   const S = C.fmtSilver;
   const SLOW_DAYS = 7;
@@ -491,6 +491,39 @@
     }
   }
 
+  // ------------------------------------------------------------ Kette: vorher selbst refinen
+  const isRefined = (id) => !!(gd.recipes[id] && C.REFINING_CATS.has(gd.recipes[id].cat));
+  function chainFor(item, qty, city, buyCity, buyMode, refineCity) {
+    return C.refineChain(gd, store, settings, item, Math.max(0, Math.round(qty)), { city, refineCity, buyCity, buyMode, maxAge: settings.max_age_hours });
+  }
+  const pct = (r) => C.fmtNum(r * 100) + " %";
+  /** Was genau zu tun ist + wie viel es spart (und was die Bonusstadt zusätzlich bringen würde). */
+  function chainView(ch, buyCity, buyMode, opts) {
+    opts = opts || {};
+    const box = el("div", { class: "chain" });
+    const per = ch.qty ? ch.ownCost / ch.qty : null;
+    box.append(el("div", { class: "chain-h" }, `★ ${S(ch.qty)} × ${gd.label(ch.item)} selbst refinen`,
+      ch.saving !== null ? el("b", { class: ch.saving > 0 ? "pos" : "neg" }, ` · spart ${S(ch.saving)}`) : null),
+      el("div", { class: "small muted" }, `${S(per)} statt ${S(ch.market)} pro Stück (Kaufpreis in ${buyCity})`));
+    const ol = el("ol", { class: "chain-steps" });
+    ol.append(el("li", {}, "Kaufen in " + buyCity + ": " + Object.entries(ch.buy).map(([id, q]) => `${S(q)} × ${gd.label(id)}`).join(" + ")));
+    ch.steps.forEach((st) => ol.append(el("li", {}, `${S(st.out)} × ${gd.label(st.item)} refinen in ${st.city} (Rücklauf ${pct(st.rrr)}) – aus ` +
+      st.from.map(([id, q]) => `${S(q)} × ${gd.label(id)}`).join(" + "))));
+    box.append(ol);
+    const rcRec = gd.recipes[ch.item];
+    const rc = rcRec ? C.bonusCityFor(settings, rcRec.cat) : null;
+    if (rc && rc !== ch.city && !opts.noBonus) {
+      const b = chainFor(ch.item, ch.qty, ch.city, buyCity, buyMode, rc);
+      if (b.ownCost !== null && ch.ownCost !== null) {
+        const extra = ch.ownCost - b.ownCost;
+        box.append(el("div", { class: "small " + (extra > 0 ? "gold" : "muted") }, extra > 0
+          ? `💡 In ${rc} (Bonusstadt, Rücklauf ${pct(b.rrr)}) refinen spart zusätzlich ${S(extra)} – dafür Transport ${buyCity} → ${rc} → ${ch.city}`
+          : `In ${rc} (Bonusstadt) wäre es nicht günstiger.`));
+      }
+    }
+    return box;
+  }
+
   // ------------------------------------------------------------ Silber-Finder
   const S_GROUPS = ["Refining", "Tränke", "Essen", "Waffen", "Rüstung", "Nebenhand", "Taschen & Umhänge", "Sammlerausrüstung", "Werkzeuge"];
   const ALCH_GROUPS = ["Tränke", "Essen"];
@@ -723,6 +756,23 @@
     return { text: `Craften & kaufen in ${ev.city} → Sofortverkauf ${ev.sellLoc === C.BLACK_MARKET ? "an Black Market" : "in " + ev.sellLoc}`, transport };
   }
 
+  function silverChains(ev, crafts) {
+    const other = ev.selfMade.filter((i) => !isRefined(i));
+    if (other.length && other.length === ev.selfMade.length)
+      return el("div", { class: "small gold", style: "margin-top:6px" }, `★ Selbst herstellen (billiger als kaufen): ${other.map((i) => gd.name(i)).join(", ")} – Antippen zeigt jeden Schritt`);
+    const jb = C.jointBuy(ev.rec.res, crafts, ev.rrr);
+    const d = el("details", { class: "chain-wrap", on: { click: (e) => e.stopPropagation() } });
+    let total = 0;
+    const inner = el("div", {});
+    ev.rec.res.forEach(([rid], i) => {
+      if (!ev.selfMade.includes(rid) || !isRefined(rid)) return;
+      const ch = chainFor(rid, jb[i], ev.city, ev.buyCity, ev.buyMode);
+      if (ch.saving) total += ch.saving;
+      inner.append(chainView(ch, ev.buyCity, ev.buyMode));
+    });
+    d.append(el("summary", { class: "small gold" }, `★ Vorher selbst refinen: ${ev.selfMade.map((i) => gd.name(i)).join(", ")} · spart ${S(total)} – so geht's`), inner);
+    return d;
+  }
   function silverCard(p, isPlan) {
     const ev = p.ev;
     const w = evWhere(ev);
@@ -740,7 +790,7 @@
         fact("Fokus", ev.focus ? (isPlan ? S(p.focus) : "ja") : "–"),
         fact("Material", ev.buyMode === "order" ? "Kaufauftrag" : "Sofortkauf"),
       ),
-      ev.selfMade.length ? el("div", { class: "small gold", style: "margin-top:6px" }, "★ Selbst refinen: " + ev.selfMade.map((i) => gd.label(i)).join(", ")) : null,
+      ev.selfMade.length ? silverChains(ev, p.crafts || Math.max(1, Math.round((p.pieces || ev.rec.amount) / ev.rec.amount))) : null,
     );
   }
 
@@ -860,7 +910,7 @@
     const rest = silver.plan.filter((q) => !q.ev.alch);
     if (!rest.length) { note(`📝 ${silver.plan.length} Rezepte gespeichert`); return; }
     addToShop(rest.map((p) => ({ id: p.ev.id, crafts: p.crafts, city: p.ev.city, buy_city: p.ev.buyCity,
-      buy_mode: p.ev.buyMode, focus: p.ev.focus, daily: 0, sell_loc: p.ev.sellLoc, sell_mode: p.ev.sellMode })), "Silber-Finder");
+      buy_mode: p.ev.buyMode, focus: p.ev.focus, daily: 0, sell_loc: p.ev.sellLoc, sell_mode: p.ev.sellMode, self: p.ev.selfMade || [] })), "Silber-Finder");
     note(`📝 ${silver.plan.length} Rezepte gespeichert`);
       }
 
@@ -880,7 +930,7 @@
     const buyCity = ui.aBuy === C.SAME_CITY ? city : ui.aBuy;
     const sellLocs = ui.aSell === C.AUTO_MARKET ? C.MARKETS : [ui.aSell === C.SAME_CITY ? city : ui.aSell];
     return { city, buyCity, buyMode: ui.aBuyMode, maxAge: settings.max_age_hours, alts: alchData.alts,
-      focus: ui.aFocus, daily: Number(ui.aDaily) || 0, sellLocs, sellMode: ui.aSellMode, stock, focusAvail: myFocus(), fce: Number(ui.sFce) || 0 };
+      focus: ui.aFocus, daily: Number(ui.aDaily) || 0, sellLocs, sellMode: ui.aSellMode, stock, focusAvail: myFocus(), fce: Number(ui.sFce) || 0, buyOnly: ui.aSelf === false };
   }
   const aQty = () => Math.max(1, Math.floor(Number(ui.aQty) || 1));
   const aBudget = () => Math.max(0, Math.floor(Number(ui.aBudget) || 0));
@@ -1014,6 +1064,7 @@
     fill($("a-sell"), [C.AUTO_MARKET, C.SAME_CITY].concat(C.CITIES), ui.aSell, { [C.SAME_CITY]: "Wie Crafting-Stadt" });
     $("a-sellmode").value = ui.aSellMode; $("a-buymode").value = ui.aBuyMode;
     fsegRender("a", ui.aFocus, o.city, gd.recipes[aId()]);
+    $("a-self").checked = ui.aSelf !== false;
     $("a-daily").value = ui.aDaily; $("a-focus").checked = ui.aFocus; if (document.activeElement !== $("a-myfocus")) $("a-myfocus").value = myFocus();
     $("a-opts-sum").textContent = `${o.city}${o.buyCity !== o.city ? " · Kauf " + o.buyCity : ""} · ${ui.aSell === C.AUTO_MARKET ? "bester Markt" : o.sellLocs[0]}${ui.aFocus ? " · Fokus" : ""}`;
   }
@@ -1229,6 +1280,10 @@
       prices[pl.id] = pl.buyNet > 0 ? (pl.price === null ? null : (pl.fromStock * (st ? st.value : 0) + pl.buyNet * pl.price) / pl.buy)
         : (st ? st.value : pl.price);
       pl.cost = pl.buyNet > 0 ? (pl.price !== null ? pl.buyNet * pl.price : null) : 0;
+      if (ui.cSelf && ui.cSelf[pl.id] && pl.buyNet > 0 && isRefined(pl.id)) {
+        const ch = chainFor(pl.id, pl.buyNet, city, buy, ui.cBuyMode);
+        if (ch.self) { pl.chain = ch; pl.cost = ch.cost; prices[pl.id] = (pl.fromStock * (st ? st.value : 0) + ch.cost) / pl.buy; }
+      }
       if (pl.cost === null) buyOk = false; else buyCost += pl.cost;
     }
     const best = C.bestSale(store, settings, id, sellLocs, ui.cSellMode);
@@ -1275,6 +1330,9 @@
   function loadCraft() {
     const k = craftCalc(); if (!k) return;
     const mats = k.rec.res.map((x) => x[0]);
+    // für die Kette (selbst refinen) auch die Rohstoffe der Barren/Planken … laden
+    const addChain = (id, d) => { const r = gd.recipes[id]; if (!r || !C.REFINING_CATS.has(r.cat) || d > 8) return; r.res.forEach(([rid]) => { if (!mats.includes(rid)) mats.push(rid); addChain(rid, d + 1); }); };
+    k.rec.res.forEach(([rid]) => addChain(rid, 0));
     const jobs = [[mats, [k.buy]], [[ui.cItem], k.sellLocs], [[ui.cItem], k.sellLocs, "history"], [mats, [k.buy], "history"]];
     const jf = journalFor(ui.cItem);
     if (jf) jobs.push([[jf[0] + "_FULL", jf[0] + "_EMPTY"], [k.city]]);
@@ -1324,6 +1382,28 @@
     $("c-daily").value = ui.cDaily; $("c-station").value = ui.cStation; $("c-focus").checked = ui.cFocus; if (document.activeElement !== $("c-myfocus")) $("c-myfocus").value = myFocus();
   }
 
+  function craftChainBox(pl, k) {
+    if (!isRefined(pl.id) || pl.buyNet <= 0) return null;
+    const ch = pl.chain || chainFor(pl.id, pl.buyNet, k.city, k.buy, ui.cBuyMode);
+    if (ch.ownCost === null) return null;
+    const toggle = () => { ui.cSelf = Object.assign({}, ui.cSelf || {}); if (ui.cSelf[pl.id]) delete ui.cSelf[pl.id]; else ui.cSelf[pl.id] = true; saveUi(); renderCraft(); };
+    if (pl.chain) {
+      const d = el("div", {});
+      d.append(chainView(ch, k.buy, ui.cBuyMode));
+      if (ch.saving !== null && ch.saving <= 0) d.append(el("div", { class: "small neg" }, "⚠ Bei den aktuellen Preisen wäre fertig kaufen jetzt billiger."));
+      d.append(el("button", { class: "btn", style: "margin-top:6px", on: { click: toggle } }, "↺ Ausschalten – fertig kaufen"));
+      return d;
+    }
+    const rc = C.bonusCityFor(settings, gd.recipes[pl.id].cat);
+    const b = rc && rc !== k.city ? chainFor(pl.id, pl.buyNet, k.city, k.buy, ui.cBuyMode, rc) : null;
+    const bestSave = Math.max(ch.saving || 0, b && b.saving !== null ? b.saving : 0);
+    if (bestSave <= 0) return el("div", { class: "small muted" }, `Empfehlung: fertig kaufen – selbst refinen wäre ${S(-(ch.saving || 0))} teurer.`);
+    return el("div", { class: "chain-hint" },
+      el("div", { class: "small gold" }, ch.saving > 0 ? `★ Empfehlung: selbst refinen in ${k.city} – spart ${S(ch.saving)}` : `In ${k.city} selbst refinen spart nichts`,
+        b && b.saving > (ch.saving || 0) ? ` · in ${rc} (Bonusstadt) sogar ${S(b.saving)}` : ""),
+      ch.saving > 0 ? el("button", { class: "btn", style: "margin-top:4px", on: { click: toggle } }, "★ Selbst refinen einplanen") : null);
+  }
+
   function renderCraft() {
     if (!gd || !ui.cItem || !gd.recipes[ui.cItem]) { $("c-calc").style.display = "none"; return; }
     $("c-calc").style.display = "";
@@ -1357,8 +1437,9 @@
           pl.fromStock ? el("div", { class: "small gold" }, `📦 ${S(pl.fromStock)} aus dem Lager`) : null,
           el("div", { class: "small" }, `Stückpreis ${S(pl.price)} `, el("span", { class: "src " + (pl.src || "fehlt") },
             `${pl.src || "fehlt"}${pl.ts ? " · " + C.fmtAge(pl.ts) : ""}`), `  ·  Einkauf ${S(pl.cost)}`),
-          trend(pl.id, k.buy, pl.price, "buy")),
-        el("div", { style: "text-align:right" }, el("div", { class: "small muted" }, "KAUFEN"),
+          trend(pl.id, k.buy, pl.price, "buy"),
+          craftChainBox(pl, k)),
+        el("div", { style: "text-align:right" }, el("div", { class: "small muted" }, pl.chain ? "SELBST" : "KAUFEN"),
           el("div", { class: "v num", style: "font-size:20px;color:var(--gold-lt)" }, S(pl.buyNet))),
         el("div", { style: "display:flex;flex-direction:column;gap:6px" },
           el("button", { class: "icon-btn", on: { click: () => editCraftPrice(pl.id) } }, "✎"),
@@ -1467,7 +1548,7 @@
   function projectFromCraft(k) {
     return { uid: uid(), at: Date.now(), src: "Crafting", id: ui.cItem, pieces: k.crafts * k.rec.amount, crafts: k.crafts,
       city: k.city, buyCity: k.buy, sellLoc: k.sellLoc, sellMode: k.mode, focus: !!ui.cFocus,
-      mats: k.plan.map((pl) => mat(pl.id, pl.buy, pl.fromStock, pl.buyNet, pl.price, pl.cost, k.buy)), steps: [],
+      ...matsWithChains(k.plan.map((pl) => ({ id: pl.id, need: pl.buy, have: pl.fromStock, buy: pl.buyNet, unit: pl.price, cost: pl.cost, chain: pl.chain })), k.buy),
       cost: k.buyCost, price: k.best ? k.best.price : null, rrr: k.rrr, focusNeed: k.fs.cf * k.fs.fpc, focusCrafts: k.fs.cf, rrrF: k.fs.rrrF, rrrN: k.fs.rrrN,
       nfPieces: k.fs.cf ? C.jointSim(k.rec.res, k.plan.map((x) => x.buy), k.crafts,
         C.returnRate(C.productionBonus(settings, k.city, k.rec.cat, false, Number(ui.cDaily) || 0))).done * k.rec.amount : null,
@@ -1484,12 +1565,37 @@
       cost: plan.buyCost, price: plan.best ? plan.best.price : null,
       revenue: plan.complete ? plan.res.revenue : null, profit: plan.complete ? plan.res.profit : null };
   }
+  /** Material-Liste + Schritte; Zutaten mit Kette werden durch ihre Rohstoffe ersetzt. */
+  function matsWithChains(entries, buyCity) {
+    const mats = [], steps = [];
+    const add = (item, need, have, buy, unit, cost) => {
+      const m = mats.find((x) => x.item === item);
+      if (m) { m.need += need; m.have += have || 0; m.buy += buy; m.cost = m.cost === null || cost === null ? null : m.cost + cost; m.done = m.buy <= 0; }
+      else mats.push(mat(item, need, have, buy, unit, cost, buyCity));
+    };
+    for (const x of entries) {
+      if (x.chain && x.chain.self) {
+        for (const [id, q] of Object.entries(x.chain.buy)) {
+          const [pp, src] = store.get(id, buyCity, "sell");
+          const u = pp && src !== "alt" ? C.buyUnitCost(settings, pp, "instant") : null;
+          add(id, q, 0, q, u, u === null ? null : u * q);
+        }
+        x.chain.steps.forEach((st) => steps.push({ item: st.item, out: st.out, crafts: st.crafts, from: st.from, city: st.city, kind: "refine", depth: st.depth, done: false }));
+      } else add(x.id, x.need, x.have, x.buy, x.unit, x.cost);
+    }
+    steps.sort((a, b) => b.depth - a.depth);
+    return { mats, steps };
+  }
   function projectFromEntry(e, src) {
     const k = shopCalc(e);
+    const self = e.self || [];
+    const mw = matsWithChains(k.plan.map((pl) => ({ id: pl.id, need: pl.buy, have: 0, buy: pl.buy, unit: pl.price,
+      cost: pl.price === null ? null : pl.buy * pl.price,
+      chain: self.includes(pl.id) ? chainFor(pl.id, pl.buy, e.city, e.buy_city, e.buy_mode) : null })), e.buy_city);
+    const cost = mw.mats.every((m) => m.cost !== null) ? mw.mats.reduce((a, m) => a + m.cost, 0) : k.buyCost;
     return { uid: uid(), at: Date.now(), src, id: e.id, pieces: e.crafts * k.rec.amount, crafts: e.crafts,
       city: e.city, buyCity: e.buy_city, sellLoc: e.sell_loc, sellMode: e.sell_mode, focus: !!e.focus,
-      mats: k.plan.map((pl) => mat(pl.id, pl.buy, 0, pl.buy, pl.price, pl.price === null ? null : pl.buy * pl.price, e.buy_city)), steps: [],
-      cost: k.buyCost, price: k.best ? k.best.price : null, revenue: k.revenue, profit: k.profit };
+      mats: mw.mats, steps: mw.steps, cost, price: k.best ? k.best.price : null, revenue: k.revenue, profit: k.revenue !== null && cost !== null ? k.revenue - cost : k.profit };
   }
   function saveRecipe(p) {
     projects = storage.get("projects", projects);   // immer den neuesten Stand nehmen
@@ -1572,7 +1678,7 @@
   }
   function projectText(p) {
     const lines = toBuy(p).map((m) => `${m.done ? "✔" : "☐"} ${S(m.buy)} × ${gd.label(m.item)} (${m.city})${matCost(m) !== null ? " – " + S(matCost(m)) : ""}`);
-    const steps = p.steps.map((st) => `${st.done ? "✔" : "☐"} ${S(st.out)} × ${gd.label(st.item)} herstellen`);
+    const steps = p.steps.map((st) => `${st.done ? "✔" : "☐"} ${S(st.out)} × ${gd.label(st.item)} ${st.kind === "refine" ? "refinen in " + st.city : "herstellen"}`);
     return `${S(p.pieces)} × ${gd.label(p.id)} – Craften in ${p.city}\n\nEinkaufen:\n${lines.join("\n") || "nichts"}` +
       (steps.length ? `\n\nZwischenprodukte:\n${steps.join("\n")}` : "") + `\n\nEinkauf ca. ${S(p.cost)} Silber`;
   }
@@ -1687,8 +1793,8 @@
       for (const st of p.steps) {
         const cb = el("input", { type: "checkbox", checked: !!st.done, on: { change: () => { st.done = cb.checked; saveProjects(); renderShop(); } } });
         card.append(el("div", { class: "chk" + (st.done ? " done" : "") }, el("label", {}, cb, el("div", { class: "t" },
-          el("div", { class: "n" }, `${S(st.out)} × ${gd.label(st.item)} herstellen`),
-          el("div", { class: "small muted" }, `${S(st.crafts)} Crafts` + (st.from && st.from.length ? ` · aus ${st.from.map((x) => gd.label(x)).join(" + ")}` : ""))))));
+          el("div", { class: "n" }, `${S(st.out)} × ${gd.label(st.item)} ${st.kind === "refine" ? "refinen in " + st.city : "herstellen"}`),
+          el("div", { class: "small muted" }, `${S(st.crafts)} ${st.kind === "refine" ? "Refines" : "Crafts"}` + (st.from && st.from.length ? ` · aus ${st.from.map((x) => Array.isArray(x) ? S(x[1]) + " × " + gd.label(x[0]) : gd.label(x)).join(" + ")}` : ""))))));
       }
     }
     // 3 · Craften
@@ -2818,6 +2924,7 @@
       $(id).addEventListener("change", (e) => { ui[key] = e.target.type === "number" ? Number(e.target.value) || 0 : e.target.value; saveUi(); esRender(); }));
     [...$("a-fseg").children].forEach((b) => b.addEventListener("click", () => { ui.aFocus = b.dataset.f === "1"; saveUi(); renderAlch(); }));
     [...$("c-fseg").children].forEach((b) => b.addEventListener("click", () => { ui.cFocus = b.dataset.f === "1"; saveUi(); renderCraft(); }));
+    $("a-self").addEventListener("change", (e) => { ui.aSelf = e.target.checked; saveUi(); renderAlch(); });
     $("a-myfocus").addEventListener("change", (e) => { ui.sFocus = Math.max(0, Number(e.target.value) || 0); saveUi(); renderAlch(); });
     $("c-myfocus").addEventListener("change", (e) => { ui.sFocus = Math.max(0, Number(e.target.value) || 0); saveUi(); renderCraft(); });
     $("c-browse").addEventListener("click", () => { cBrowse = true; renderCraftSearch(); $("c-search").focus(); });

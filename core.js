@@ -546,6 +546,36 @@
     return buy;
   }
 
+  /**
+   * Kette: Lohnt es sich, eine Zutat (Barren, Planken, Leder, Stoff, Blöcke) vorher selbst zu refinen?
+   * Rekursiv bis zum Rohstoff, mit echten Kaufmengen (ganze Rückgabe). o: {city, refineCity, buyCity, buyMode, maxAge, daily}
+   * -> {item, qty, market (Stückpreis), cost (günstigster Weg gesamt), self, ownCost, saving, steps:[…], buy:{id:qty}, city, rrr}
+   */
+  function refineChain(gd, store, s, item, qty, o, depth) {
+    depth = depth || 0;
+    const kind = o.buyMode === "instant" ? "sell" : "buy";
+    const [p, src] = store.get(item, o.buyCity, kind, o.maxAge);
+    const market = p && (src !== "alt" || src === "manuell") ? buyUnitCost(s, p, o.buyMode) : null;
+    const r = gd.recipes[item];
+    const out = { item, qty, market, cost: market !== null ? market * qty : null, self: false, ownCost: null, saving: null, steps: [], buy: { [item]: qty } };
+    if (!r || !REFINING_CATS.has(r.cat) || depth > 8 || qty <= 0) return out;
+    const city = o.refineCity || o.city;
+    const rrr = returnRate(productionBonus(s, city, r.cat, false, o.daily || 0));
+    const crafts = Math.ceil(qty / r.amount);
+    const jb = jointBuy(r.res, crafts, rrr);
+    const subs = r.res.map(([rid], i) => refineChain(gd, store, s, rid, jb[i], o, depth + 1));
+    if (subs.some((x) => x.cost === null)) return out;
+    const ownCost = subs.reduce((a, x) => a + x.cost, 0) + (r.silver || 0) * crafts;
+    out.ownCost = ownCost; out.city = city; out.rrr = rrr;
+    out.saving = market !== null ? market * qty - ownCost : null;
+    if (market === null || ownCost < market * qty) {
+      out.self = true; out.cost = ownCost; out.buy = {};
+      subs.forEach((x) => { for (const [k, v] of Object.entries(x.buy)) out.buy[k] = (out.buy[k] || 0) + v; out.steps.push(...x.steps); });
+      out.steps.push({ item, crafts, out: crafts * r.amount, city, rrr, from: r.res.map(([rid], i) => [rid, jb[i]]), kind: "refine", depth });
+    }
+    return out;
+  }
+
   /** Pro Zutat: was du kaufen musst, damit am Ende (fast) nichts übrig bleibt. */
   function buyPlan(recipe, crafts, rrr) {
     const buys = jointBuy(recipe.res, crafts, rrr);
@@ -733,6 +763,7 @@
       return m;
     };
     const altsOf = (item) => {
+      if (ctx.buyOnly) return [];   // Schalter „Zwischenprodukte selbst herstellen“ aus: alles kaufen
       const list = (ctx.alts[item] || []).map((a) => Object.assign({ cat: null }, a));
       const r = gd.recipes[item];
       if (r && (r.cat === "food" || r.cat === "potion") && r.ench === 0 && !list.length) list.push({ amount: r.amount, res: r.res, cat: r.cat });
@@ -851,7 +882,7 @@
     parseDate, ageHours, fmtAge, fmtSilver, fmtNum, ceilInt,
     GameData, PriceStore, bonusCityFor, productionBonus, returnRate, focusCost,
     salesTax, sellFee, buyUnitCost, salePrice, bestSale, volumeOk, calcCraft,
-    refineTable, needs, refineAmount, refineDetail, simulate, buyAmount, jointSim, jointBuy, focusSplit, splitBuy, buyPlan, craftsFor,
+    refineTable, needs, refineAmount, refineDetail, simulate, buyAmount, jointSim, jointBuy, focusSplit, splitBuy, refineChain, buyPlan, craftsFor,
     evalCraft, upfrontCost, planSilver, makeSolver, cheapPlan,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = Core;

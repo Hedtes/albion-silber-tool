@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const C = window.Core;
-  const VERSION = "1.8.3";
+  const VERSION = "1.8.4";
   const $ = (id) => document.getElementById(id);
   const S = C.fmtSilver;
   const SLOW_DAYS = 7;
@@ -1465,18 +1465,51 @@
     note(`📝 Gespeichert (Nr. ${projects.length}): ${S(p.pieces)} × ${gd.label(p.id)}`);
     renderShop();
   }
+  const curProj = (m) => projects.find((p) => p.mats.includes(m));
   function editMat(m) {
     const unit = m.paid !== null && m.paid !== undefined && m.buy ? m.paid / m.buy : m.unit;
     qpOpen({ title: gd.label(m.item), sub: `${m.city} · geplant ${S(m.buy)} Stück${m.unit !== null ? " à ca. " + S(m.unit) : ""}`,
       qty: m.buy, qtyEdit: true, unit, check: { label: "✔ Schon gekauft", value: true },
       onSave: ({ qty, unit, total, check }) => {
         m.buy = qty;
-        if (check) { m.done = true; m.paid = total; }
+        if (check) { m.done = true; m.paid = total; m.got = qty; removeMatOrders(curProj(m), m, true); }
         else { m.done = false; m.paid = null; m.unit = unit; m.cost = total; }
         saveProjects(); renderShop();
       } });
   }
-  const matCost = (m) => m.paid !== null && m.paid !== undefined ? m.paid : m.cost;
+  const matCost = (m) => {
+    if (m.paid === null || m.paid === undefined) return m.cost;
+    if (!m.done && m.got && m.got < m.buy && m.unit !== null) return m.paid + (m.buy - m.got) * m.unit;  // Rest noch zum Plan-Preis
+    return m.paid;
+  };
+  /** Offene Kaufaufträge, die zu diesem Rezept-Material gehören */
+  const matOrders = (p, m) => orders.filter((o) => o.proj === p.uid && o.mat === m.item && o.filled < o.qty);
+  function removeMatOrders(p, m, ask) {
+    const os = matOrders(p, m);
+    if (!os.length) return;
+    if (ask && !confirm(`Den offenen Kaufauftrag für ${gd.label(m.item)} auch löschen?`)) return;
+    orders = orders.filter((o) => !os.includes(o)); saveOrders();
+  }
+  function matOrder(p, m) {
+    const rest = Math.max(0, m.buy - (m.got || 0));
+    const [bid, src] = store.get(m.item, m.city, "buy");
+    const price = bid && src !== "alt" ? bid + 1 : m.unit;
+    openOrder({ side: "buy", id: m.item, qty: rest, price, loc: m.city, proj: p.uid, mat: m.item });
+  }
+  function allMatOrders(p) {
+    const list = toBuy(p).filter((m) => !m.done && !matOrders(p, m).length && m.buy - (m.got || 0) > 0);
+    if (!list.length) { alert("Alle offenen Materialien haben schon einen Kaufauftrag (oder sind gekauft)."); return; }
+    const rows = list.map((m) => {
+      const [bid, src] = store.get(m.item, m.city, "buy");
+      return { m, qty: m.buy - (m.got || 0), price: Math.round(bid && src !== "alt" ? bid + 1 : (m.unit || 0)) };
+    }).filter((r) => r.price > 0);
+    const tied = rows.reduce((a, r) => a + r.qty * r.price * (1 + settings.setup_fee / 100), 0);
+    if (!confirm(`${rows.length} Kaufaufträge anlegen (je 1 Silber über dem höchsten Gebot)?\n\n` +
+      rows.map((r) => `${S(r.qty)} × ${gd.label(r.m.item)} à ${S(r.price)}`).join("\n") + `\n\nGebundenes Silber: ${S(tied)}`)) return;
+    rows.forEach((r) => orders.push({ uid: uid(), side: "buy", id: r.m.item, qty: r.qty, filled: 0, price: r.price, loc: r.m.city, at: Date.now(), proj: p.uid, mat: r.m.item }));
+    saveOrders(); renderShop();
+    note(`📑 ${rows.length} Kaufaufträge angelegt – im Spiel genauso einstellen`);
+  }
   const toBuy = (p) => p.mats.filter((m) => m.buy > 0);
 
   function finishProject(p) {
@@ -1487,7 +1520,12 @@
       price: p.price, loc: p.sellLoc, mode: p.sellMode })) return;
     const used = {}; p.mats.forEach((m) => { if (m.have) used[m.item] = m.have; });
     consumeStock(used);
+    dropProjOrders(p);
     projects = projects.filter((x) => x !== p); saveProjects(); renderShop();
+  }
+  function dropProjOrders(p) {
+    const os = orders.filter((o) => o.proj === p.uid && o.filled < o.qty);
+    if (os.length && confirm(`${os.length} offene Kaufaufträge gehören zu diesem Rezept. Auch löschen?`)) { orders = orders.filter((o) => !os.includes(o)); saveOrders(); }
   }
   function openProject(p) {
     const r = gd.recipes[p.id]; if (!r) return;
@@ -1535,7 +1573,7 @@
           el("div", { class: "small" }, `Craften in ${p.city}${p.focus ? " MIT Fokus" : " ohne Fokus"} · Einkauf in ${p.buyCity} · Verkauf in ${p.sellLoc}`),
           projFocusNote(p)),
         el("button", { class: "icon-btn", title: "Rezept löschen", on: { click: () => {
-          if (confirm(`Rezept „${S(p.pieces)} × ${gd.label(p.id)}“ löschen?\n(Im Buch wird nichts eingetragen.)`)) { projects = projects.filter((x) => x !== p); saveProjects(); renderShop(); }
+          if (confirm(`Rezept „${S(p.pieces)} × ${gd.label(p.id)}“ löschen?\n(Im Buch wird nichts eingetragen.)`)) { dropProjOrders(p); projects = projects.filter((x) => x !== p); saveProjects(); renderShop(); }
         } } }, "🗑")),
       el("div", { class: "proj-bar" }, el("div", { style: `width:${buys.length ? done / buys.length * 100 : 100}%` })),
       el("div", { class: "small " + (ready ? "pos" : "") }, ready ? "✔ Alles gekauft – jetzt craften" :
@@ -1550,15 +1588,33 @@
           el("div", { class: "small gold" }, "hast du schon im Lager – nichts kaufen"))));
         continue;
       }
-      const cb = el("input", { type: "checkbox", checked: !!m.done, on: { change: () => { m.done = cb.checked; saveProjects(); renderShop(); } } });
+      const cb = el("input", { type: "checkbox", checked: !!m.done, on: { change: () => {
+        m.done = cb.checked; if (m.done) { if (!m.got) m.got = m.buy; removeMatOrders(p, m, true); }
+        saveProjects(); renderShop(); } } });
+      const os = matOrders(p, m);
+      const part = !m.done && m.got > 0;
       card.append(el("div", { class: "chk" + (m.done ? " done" : "") },
         el("label", {}, cb, el("div", { class: "t" },
           el("div", { class: "n" }, `${S(m.buy)} × ${gd.label(m.item)}`),
-          el("div", { class: "small muted" }, `${m.city} · ${m.paid !== null && m.paid !== undefined && m.buy ? S(m.paid / m.buy) + " pro Stück (bezahlt)" : m.unit === null ? "Preis fehlt" : "ca. " + S(m.unit) + " pro Stück"}` +
+          el("div", { class: "small muted" }, `${m.city} · ${m.paid !== null && m.paid !== undefined && m.got ? S(m.paid / m.got) + " pro Stück (bezahlt)" : m.unit === null ? "Preis fehlt" : "ca. " + S(m.unit) + " pro Stück"}` +
             (m.have ? ` · dazu ${S(m.have)} aus dem Lager` : "")),
-          m.done ? el("div", { class: "small tag" }, m.paid !== null ? `✔ gekauft für ${S(m.paid)}` : "✔ gekauft") : null)),
+          part ? el("div", { class: "small gold" }, `${S(m.got)} von ${S(m.buy)} gekauft · noch ${S(m.buy - m.got)}`) : null,
+          m.done ? el("div", { class: "small tag" }, m.paid !== null && m.paid !== undefined ? `✔ gekauft für ${S(m.paid)}` : "✔ gekauft") : null)),
         el("div", { class: "num", style: "font-weight:700;text-align:right" }, matCost(m) === null ? "–" : S(matCost(m))),
-        el("button", { class: "icon-btn", title: "Menge / Preis ändern", on: { click: () => editMat(m) } }, "✎")));
+        el("div", { class: "mat-btns" },
+          el("button", { class: "icon-btn", title: "Menge / Preis ändern", on: { click: () => editMat(m) } }, "✎"),
+          !m.done && !os.length ? el("button", { class: "icon-btn", title: "Als Kaufauftrag", on: { click: () => matOrder(p, m) } }, "📑") : null)));
+      // verknüpfte Kaufaufträge: einzeln ausführen oder löschen
+      for (const o of os) {
+        const rest = o.qty - o.filled;
+        card.append(el("div", { class: "mat-order" },
+          el("div", { class: "t" }, el("div", { class: "small", style: "font-weight:700" }, `📑 Kaufauftrag ${S(rest)} × à ${S(o.price)}`),
+            el("div", { class: "small muted" }, `${o.loc}${o.filled ? " · " + S(o.filled) + " schon bekommen" : ""} · seit ${C.fmtAge(o.at / 1000)}`)),
+          el("button", { class: "btn", on: { click: () => orderFillAsk(o) } }, "✔ Ausgeführt"),
+          el("button", { class: "icon-btn", title: "Auftrag löschen", on: { click: () => {
+            if (confirm(`Kaufauftrag ${S(rest)} × ${gd.label(o.id)} löschen?`)) { orders = orders.filter((x) => x !== o); saveOrders(); renderShop(); }
+          } } }, "✕")));
+      }
     }
     // 2 · Zwischenprodukte
     if (p.steps.length) {
@@ -1582,6 +1638,7 @@
           el("b", { class: p.profit > 0 ? "pos" : "neg" }, `${p.profit > 0 ? "+" : ""}${S(p.profit)} Silber`)) : null),
       el("div", { class: "proj-btns" },
         el("button", { class: "btn primary wide", on: { click: () => finishProject(p) } }, "✔ Fertig gecraftet – ins Buch"),
+        el("button", { class: "btn wide", on: { click: () => allMatOrders(p) } }, "📑 Offenes als Kaufaufträge"),
         el("button", { class: "btn", on: { click: () => openProject(p) } }, "🧮 Im Rechner öffnen"),
         el("button", { class: "btn", on: { click: () => shareText("Rezept", projectText(p)) } }, "Teilen")));
     return card;
@@ -2390,7 +2447,7 @@
   let orderDraft = null;
   function openOrder(draft) {
     fillItemList();
-    orderDraft = Object.assign({ side: "buy", id: null, qty: "", price: "", loc: C.CITIES[0], bookUid: null }, draft || {});
+    orderDraft = Object.assign({ side: "buy", id: null, qty: "", price: "", loc: C.CITIES[0], bookUid: null, proj: null, mat: null }, draft || {});
     [...$("order-side").children].forEach((b) => b.classList.toggle("on", b.dataset.s === orderDraft.side));
     $("order-item").value = orderDraft.id ? gd.label(orderDraft.id) : "";
     $("order-qty").value = orderDraft.qty; $("order-price").value = orderDraft.price ? Math.round(orderDraft.price) : "";
@@ -2414,9 +2471,11 @@
     if (!id) { alert("Bitte ein Item aus der Liste auswählen."); return; }
     if (!qty || !price) { alert("Bitte Stück und Preis eingeben."); return; }
     const side = [...$("order-side").children].find((b) => b.classList.contains("on")).dataset.s;
-    orders.push({ uid: uid(), side, id, qty, filled: 0, price, loc: $("order-loc").value, at: Date.now(), bookUid: orderDraft.bookUid || null });
+    orders.push({ uid: uid(), side, id, qty, filled: 0, price, loc: $("order-loc").value, at: Date.now(), bookUid: orderDraft.bookUid || null,
+      proj: orderDraft.proj || null, mat: orderDraft.mat || null });
     saveOrders(); closeOrder();
-    if (ui.view === "shop") showListPane("orders");
+    if (orderDraft.proj) { renderShop(); note("📑 Kaufauftrag gespeichert – steht im Rezept unter dem Material"); }
+    else if (ui.view === "shop") showListPane("orders");
     else setStatus(`📑 Auftrag gespeichert – zu finden unter Liste → Aufträge`);
   }
   /** Ausgeführte Menge verbuchen: Kauf -> Lager + Ausgabe, Verkauf -> Verkauf im Buch */
@@ -2424,6 +2483,16 @@
     n = Math.min(n, o.qty - o.filled);
     if (n <= 0) return;
     o.filled += n;
+    const pj = o.proj && projects.find((x) => x.uid === o.proj);
+    const pm = pj && pj.mats.find((x) => x.item === o.mat);
+    if (o.side === "buy" && pm) {
+      // gehört zu einem Rezept: dort abhaken (Ausgabe kommt beim „Fertig – ins Buch“)
+      pm.got = (pm.got || 0) + n;
+      pm.paid = (pm.paid || 0) + Math.round(n * o.price * (1 + settings.setup_fee / 100));
+      if (pm.got >= pm.buy) pm.done = true;
+      saveProjects(); saveOrders();
+      return;
+    }
     if (o.side === "buy") {
       const st = stock[o.id] || { qty: 0, value: o.price };
       st.value = st.qty ? (st.qty * st.value + n * o.price) / (st.qty + n) : o.price;
@@ -2436,6 +2505,12 @@
       else book.push({ uid: uid(), type: "income", note: `Verkaufsauftrag: ${S(n)} × ${gd.label(o.id)} (${o.loc})`, amount, at: Date.now() });
     }
     saveBook(); saveOrders();
+  }
+  function orderFillAsk(o) {
+    const rest = o.qty - o.filled;
+    qpOpen({ title: `Ausgeführt: ${gd.label(o.id)}`, sub: `${o.loc} · Auftrag ${S(rest)} offen à ${S(o.price)} – wie viele hast du bekommen?`,
+      qty: rest, qtyEdit: true, focusQty: true, unit: o.price,
+      onSave: ({ qty, unit }) => { if (Math.round(unit) !== o.price) o.price = Math.round(unit); fillOrder(o, qty); refreshAll(); } });
   }
   function renderOrders() {
     const list = $("orders-list");
@@ -2458,9 +2533,10 @@
         el("div", { class: "t" },
           el("div", { style: "font-weight:700" }, `${o.side === "buy" ? "🟢 Kauf" : "🔵 Verkauf"} · ${S(rest)} × ${gd.label(o.id)}`),
           el("div", { class: "small muted" }, `${o.loc} · ${S(o.price)}/Stk · ${o.filled ? S(o.filled) + " schon ausgeführt · " : ""}seit ${C.fmtAge(o.at / 1000)}`),
+          (() => { const pj = o.proj && projects.find((x) => x.uid === o.proj); return pj ? el("div", { class: "small gold" }, `für Rezept: ${S(pj.pieces)} × ${gd.label(pj.id)}`) : null; })(),
           status ? el("div", { class: "small " + cls }, status) : el("div", { class: "small muted" }, "„Preise prüfen“ zeigt, ob du überboten wurdest")),
         el("div", { class: "row", style: "gap:6px;width:100%;justify-content:flex-end" },
-          el("button", { class: "btn", on: { click: () => { const v = window.prompt(`Wie viele wurden ausgeführt? (max. ${rest})`, String(rest)); if (v === null) return; fillOrder(o, Math.floor(Number(v) || 0)); renderOrders(); } } }, "Ausgeführt"),
+          el("button", { class: "btn", on: { click: () => orderFillAsk(o) } }, "Ausgeführt"),
           el("button", { class: "icon-btn", title: "Preis ändern", on: { click: () => { const v = window.prompt("Neuer Preis pro Stück", String(o.price)); if (v === null) return; o.price = Math.round(Number(v.replace(/[.\s]/g, "")) || o.price); saveOrders(); renderOrders(); } } }, "✎"),
           el("button", { class: "icon-btn", title: "Zurückziehen", on: { click: () => { if (confirm("Auftrag zurückgezogen / löschen?")) { orders = orders.filter((x) => x !== o); saveOrders(); renderOrders(); } } } }, "✕"))));
     }
@@ -2707,6 +2783,7 @@
       const o = aOpts(id);
       const pc = aPieces(id, o);
       const plan = C.cheapPlan(gd, store, settings, id, Math.max(pc.pieces, gd.recipes[id].amount), o);
+      if (!plan.complete) { alert("Es fehlen noch Preise, deshalb kann der billigste Weg nicht berechnet werden.\nErst „⟳ Live-Preise laden“ tippen oder fehlende Preise mit ✎ eintragen."); return; }
       saveRecipe(projectFromAlch(id, o, plan));
     });
 

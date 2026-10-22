@@ -13,7 +13,7 @@
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="icon" type="image/png" href="icons/icon-64.png">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="stylesheet" href="style.css?v=1.8.7">
+<link rel="stylesheet" href="style.css?v=1.8.8">
 </head>
 <body>
 <header class="top">
@@ -58,6 +58,7 @@
             <option value="instant">Sofortverkauf (sicher)</option><option value="order">Verkaufsauftrag (mehr, dauert)</option></select></div>
           <div class="field"><label>Mindest-Marge %</label><input id="s-margin" type="number" inputmode="decimal" value="10"></div>
           <div class="field"><label>Menge = Verkäufe von … Tagen</label><input id="s-days" type="number" inputmode="decimal" value="1"></div>
+          <div class="field"><label>Max. Anteil am Markt % <span class="muted small">(von den Verkäufen/Tag)</span></label><input id="s-share" type="number" inputmode="decimal" value="20"></div>
           <div class="field"><label>Max. Preisalter (Stunden)</label><input id="s-age" type="number" inputmode="decimal" value="6"></div>
           <div class="full"><label class="toggle"><span>✨ Verzaubern mitprüfen (Runen/Seelen/Relikte)</span><input type="checkbox" id="s-enchup"></label></div>
           <div class="full"><label class="toggle"><span>Ganze Kette: Barren/Planken selbst refinen, wenn günstiger <span class="muted small">(★)</span></span><input type="checkbox" id="s-chain"></label></div>
@@ -72,6 +73,10 @@
     <h3 id="s-more-h" style="display:none;margin:20px 2px 4px;font-size:15px">✦ Bester Fokus-Einsatz</h3>
     <div class="muted small" id="s-more-info" style="display:none;margin:0 2px 8px"></div>
     <div class="list" id="s-more"></div>
+    <h3 id="s-order-h" style="display:none;margin:20px 2px 4px;font-size:15px">📑 Mit Kauf- &amp; Verkaufsaufträgen</h3>
+    <div class="muted small" id="s-order-info" style="display:none;margin:0 2px 8px"></div>
+    <div class="list" id="s-order"></div>
+    <h3 id="s-ench-h" style="display:none;margin:20px 2px 8px;font-size:15px">✨ Verzaubern lohnt sich</h3>
     <div class="list" id="s-ench"></div>
   </section>
 
@@ -502,7 +507,7 @@
 <div class="toast note" id="note"><span id="note-text"></span><button id="note-btn">Ansehen</button></div>
 <div class="toast" id="toast"><span id="toast-text"></span><button id="toast-btn">Neu laden</button></div>
 
-<script src="core.js?v=1.8.7"></script>
-<script src="app.js?v=1.8.7"></script>
+<script src="core.js?v=1.8.8"></script>
+<script src="app.js?v=1.8.8"></script>
 </body>
 </html>

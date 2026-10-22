@@ -677,7 +677,7 @@
     const usedCrafts = {};
     const capCrafts = (ev) => {
       const pieces = ev.per_day === null || ev.per_day === undefined
-        ? (opt.unknownCap || 0) : Math.floor(ev.per_day * opt.days);
+        ? (opt.unknownCap || 0) : Math.floor(ev.per_day * opt.days * (opt.share === undefined ? 1 : opt.share));
       return Math.min(opt.maxCrafts || 1e9, Math.floor(pieces / ev.rec.amount)) - (usedCrafts[ev.id] || 0);
     };
     const take = (ev) => {

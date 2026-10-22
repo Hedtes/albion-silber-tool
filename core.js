@@ -533,7 +533,17 @@
   /** Einkauf für den Fokus-Teil + den Rest ohne Fokus (im Spiel: erst mit Fokus craften, dann ohne). */
   function splitBuy(res, fs) {
     const a = jointBuy(res, fs.cf, fs.rrrF), b = jointBuy(res, fs.cn, fs.rrrN);
-    return res.map((_, i) => (a[i] || 0) + (b[i] || 0));
+    const buy = res.map((_, i) => (a[i] || 0) + (b[i] || 0));
+    if (!fs.cf || !fs.cn) return buy;
+    // wie im Spiel nachspielen: erst die Fokus-Crafts, dann der Rest – fehlt etwas, genau das nachlegen
+    for (let guard = 0; guard < 5000; guard++) {
+      const r1 = jointSim(res, buy, fs.cf, fs.rrrF);
+      if (r1.done < fs.cf) { buy[r1.lim] += Math.max(1, res[r1.lim][1] - r1.left[r1.lim]); continue; }
+      const r2 = jointSim(res, r1.left, fs.cn, fs.rrrN);
+      if (r2.done >= fs.cn) return buy;
+      buy[r2.lim] += Math.max(1, res[r2.lim][1] - r2.left[r2.lim]);
+    }
+    return buy;
   }
 
   /** Pro Zutat: was du kaufen musst, damit am Ende (fast) nichts übrig bleibt. */

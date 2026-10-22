@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const C = window.Core;
-  const VERSION = "1.8.4";
+  const VERSION = "1.8.5";
   const $ = (id) => document.getElementById(id);
   const S = C.fmtSilver;
   const SLOW_DAYS = 7;
@@ -1516,7 +1516,7 @@
     const open = toBuy(p).filter((m) => !m.done).length;
     if (open && !confirm(`Es sind noch ${open} Material(ien) nicht als gekauft abgehakt.\nTrotzdem als fertig ins Buch eintragen?`)) return;
     const spent = toBuy(p).reduce((a, m) => a + (matCost(m) || 0), 0);
-    if (!logCraft({ id: p.id, pieces: p.pieces, cost: Math.round(spent), expected: p.revenue, where: `${p.city} → ${p.sellLoc}`,
+    if (!logCraft({ id: p.id, pieces: p.pieces, cost: Math.round(spent), expected: projProfit(p).net, where: `${p.city} → ${p.sellLoc}`,
       price: p.price, loc: p.sellLoc, mode: p.sellMode })) return;
     const used = {}; p.mats.forEach((m) => { if (m.have) used[m.item] = m.have; });
     consumeStock(used);
@@ -1552,12 +1552,43 @@
   function projFocusNote(p) {
     const pc = (r) => r === undefined || r === null ? "?" : C.fmtNum(r * 100) + " %";
     const amt = gd.recipes[p.id] ? gd.recipes[p.id].amount : 1;
-    if (!p.focus || p.focusCrafts === 0) return el("div", { class: "small" }, `Im Spiel: „Ressourcen-Ertragsrate“ ${pc(p.rrrN !== undefined ? p.rrrN : p.rrr)}`);
+    if (!p.focus || p.focusCrafts === 0) return el("div", { class: "small" }, `Im Spiel: „Ressourcen-Ertragsrate“ ${pc(p.rrrN !== undefined ? p.rrrN : p.rrr)}` +
+      (p.focus && p.focusCrafts === 0 ? " (dein Fokus reichte beim Speichern für keinen Craft mit Fokus)" : ""));
     const fc = p.focusCrafts !== undefined ? p.focusCrafts : p.crafts;
     return el("div", { class: "small gold" },
       `✦ ${S(fc)} von ${S(p.crafts)} Crafts MIT Fokus (${S(p.focusNeed)} Fokus, Ertragsrate ${pc(p.rrrF)})` +
       (fc < p.crafts ? `, danach ${S(p.crafts - fc)} ohne Fokus (${pc(p.rrrN)})` : "") +
       (p.nfPieces && p.nfPieces < p.pieces ? ` · ganz ohne Fokus nur ca. ${S(p.nfPieces)} Stück` : ""));
+  }
+  /** Erwarteter Gewinn live: Erlös (Verkaufspreis × Stück nach Steuer) − Einkauf (bezahlt bzw. eingetragen). */
+  function projProfit(p) {
+    const cost = toBuy(p).reduce((a, m) => a + (matCost(m) || 0), 0);
+    const missing = toBuy(p).some((m) => matCost(m) === null);
+    const fee = C.sellFee(settings, p.sellMode || "order");
+    const net = p.price ? p.pieces * p.price * (1 - fee) : (p.revenue !== null && p.revenue !== undefined ? p.revenue : null);
+    return { cost, net, fee, missing, profit: net === null || missing ? null : net - cost };
+  }
+  function editProjSale(p) {
+    qpOpen({ title: `Verkauf: ${gd.label(p.id)}`, sub: `${p.sellLoc} · ${p.sellMode === "instant" ? "Sofortverkauf (nur Steuer)" : "Verkaufsauftrag (Steuer + Einstellgebühr)"} · Preis pro Stück eintragen`,
+      qty: p.pieces, qtyEdit: false, unit: p.price,
+      onSave: ({ unit }) => { p.price = Math.round(unit); p.priceManual = true; saveProjects(); renderShop(); },
+      onLive: () => {
+        const best = C.bestSale(store, settings, p.id, [p.sellLoc], p.sellMode || "order");
+        if (!best) { alert("Kein Live-Preis vorhanden – erst im Rechner Preise laden."); return; }
+        p.price = best.price; p.priceManual = false; saveProjects(); renderShop();
+      }, liveLabel: "↺ Live-Preis" });
+  }
+  function projMoney(p, spent) {
+    const pp = projProfit(p);
+    const box = el("div", {});
+    box.append(
+      el("div", { class: "money-row" }, el("span", {}, `Verkauf ${p.sellLoc}: ${S(p.pieces)} × ${p.price ? S(p.price) : "?"}` + (p.priceManual ? " (eigener Preis)" : "")),
+        el("button", { class: "icon-btn sm", title: "Verkaufspreis ändern", on: { click: () => editProjSale(p) } }, "✎")),
+      el("div", { class: "money-row" }, el("span", { class: "muted" }, `Erlös nach Steuer (${C.fmtNum(pp.fee * 100)} %)`), el("b", { class: "num" }, S(pp.net))),
+      el("div", { class: "money-row" }, el("span", { class: "muted" }, `− Einkauf${spent ? " (davon bezahlt " + S(spent) + ")" : ""}`), el("b", { class: "num" }, (pp.missing ? "≥ " : "") + S(pp.cost))),
+      el("div", { class: "money-row total" }, el("span", {}, "= Erwarteter Gewinn"),
+        el("b", { class: "num " + (pp.profit === null ? "" : pp.profit > 0 ? "pos" : "neg") }, pp.profit === null ? "Preis fehlt" : `${pp.profit > 0 ? "+" : ""}${S(pp.profit)}`)));
+    return box;
   }
   function projectCard(p) {
     const buys = toBuy(p), done = buys.filter((m) => m.done).length;
@@ -1570,7 +1601,7 @@
         el("div", { class: "t" },
           el("div", { class: "proj-title" }, `${S(p.pieces)} × ${gd.label(p.id)}`),
           el("div", { class: "small muted" }, `aus ${p.src} · gespeichert ${fmtWhen(p.at)}`),
-          el("div", { class: "small" }, `Craften in ${p.city}${p.focus ? " MIT Fokus" : " ohne Fokus"} · Einkauf in ${p.buyCity} · Verkauf in ${p.sellLoc}`),
+          el("div", { class: "small" }, `Craften in ${p.city}${p.focus && p.focusCrafts !== 0 ? " MIT Fokus" : " ohne Fokus"} · Einkauf in ${p.buyCity} · Verkauf in ${p.sellLoc}`),
           projFocusNote(p)),
         el("button", { class: "icon-btn", title: "Rezept löschen", on: { click: () => {
           if (confirm(`Rezept „${S(p.pieces)} × ${gd.label(p.id)}“ löschen?\n(Im Buch wird nichts eingetragen.)`)) { dropProjOrders(p); projects = projects.filter((x) => x !== p); saveProjects(); renderShop(); }
@@ -1631,11 +1662,7 @@
     card.append(el("div", { class: "proj-sec" }, `${p.steps.length ? 3 : 2} · Craften & verkaufen`),
       el("div", { class: "proj-sum" },
         el("div", {}, el("b", {}, `${S(p.crafts)} Crafts → ${S(p.pieces)} × ${gd.label(p.id)}`), ` in ${p.city}`),
-        el("div", { class: "small" }, `Einkauf gesamt ${S(buys.reduce((a, m) => a + (matCost(m) || 0), 0))} · schon ausgegeben ${S(spent)}`),
-        el("div", { class: "small" }, `Verkauf geplant: ${p.sellLoc}${p.price ? " · ca. " + S(p.price) + " pro Stück" : ""}`),
-        el("div", { class: "small muted hint" }, "Am Ende bleibt die Rückgabe der letzten Runde übrig (unter 1 Craft) – ab ins 📦 Lager."),
-        p.profit !== null ? el("div", { class: "small" }, "Erwarteter Gewinn: ",
-          el("b", { class: p.profit > 0 ? "pos" : "neg" }, `${p.profit > 0 ? "+" : ""}${S(p.profit)} Silber`)) : null),
+        projMoney(p, spent)),
       el("div", { class: "proj-btns" },
         el("button", { class: "btn primary wide", on: { click: () => finishProject(p) } }, "✔ Fertig gecraftet – ins Buch"),
         el("button", { class: "btn wide", on: { click: () => allMatOrders(p) } }, "📑 Offenes als Kaufaufträge"),
@@ -1678,7 +1705,7 @@
       }
     }
     const openCost = list.reduce((x, a) => x + a.cost, 0);
-    const profit = projects.reduce((x, p) => x + (p.profit || 0), 0);
+    const profit = projects.reduce((x, p) => x + (projProfit(p).profit || 0), 0);
     const t = $("shop-tiles");
     t.innerHTML = "";
     t.append(

@@ -299,3 +299,7 @@ body.no-hints .hint { display: none !important; }
 .mat-order { display: flex; gap: 8px; align-items: center; margin: -4px 0 6px 38px; padding: 6px 8px; background: var(--panel2); border: 1px dashed var(--line); border-radius: 10px; }
 .mat-order .t { flex: 1; min-width: 0; }
 .mat-order .btn { padding: 7px 10px; font-size: 13px; }
+
+.money-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13.5px; padding: 3px 0; }
+.money-row.total { border-top: 1px solid var(--line); margin-top: 4px; padding-top: 6px; font-weight: 800; font-size: 15px; }
+.icon-btn.sm { width: 32px; height: 32px; font-size: 14px; }

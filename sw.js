@@ -1,6 +1,6 @@
 /* Service Worker: App offline verfügbar, Updates sofort (Netz zuerst, Cache als Reserve). */
-const CACHE = "ast-1.9.4";
-const FILES = ["./", "index.html", "style.css?v=1.9.4", "core.js?v=1.9.4", "app.js?v=1.9.4", "data/recipes_all.json", "data/alchemy.json", "data/journals.json", "data/enchant.json",
+const CACHE = "ast-2.0.0";
+const FILES = ["./", "index.html", "style.css?v=2.0.0", "core.js?v=2.0.0", "app.js?v=2.0.0", "data/recipes_all.json", "data/alchemy.json", "data/journals.json", "data/enchant.json",
   "manifest.webmanifest", "icons/icon-64.png", "icons/icon-192.png", "icons/apple-touch-icon.png"];
 
 self.addEventListener("install", (e) => {

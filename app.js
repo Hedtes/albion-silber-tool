@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const C = window.Core;
-  const VERSION = "1.9.4";
+  const VERSION = "2.0.0";
   const $ = (id) => document.getElementById(id);
   const S = C.fmtSilver;
   const SLOW_DAYS = 7;
@@ -836,6 +836,10 @@
   }
 
   function renderSilver() {
+    const isCl = ui.sMode === "cl";
+    $("cl-pane").style.display = isCl ? "" : "none";
+    $("s-main").style.display = isCl ? "none" : "";
+    if (isCl) { [...$("s-mode").children].forEach((b) => b.classList.toggle("on", b.dataset.m === "cl")); clRender(); return; }
     renderSilverOpts();
     const t = $("s-tiles"), plan = $("s-plan"), more = $("s-more");
     t.innerHTML = ""; plan.innerHTML = ""; more.innerHTML = "";
@@ -2631,6 +2635,224 @@
     $("a-calc").scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
+  // ------------------------------------------------------------ Caerleon ↔ Black Market (100 % sicher, gleiche Stadt)
+  // Markt-IDs aus dem Spiel (Albion Data Client) → Namen
+  const CL_LOC = { "0007": "Thetford", "1002": "Lymhurst", "2004": "Bridgewatch", "3008": "Martlock", "4002": "Fort Sterling",
+    "3005": "Caerleon", "3003": C.BLACK_MARKET, "5003": "Brecilien" };
+  const QNAME = ["", "Normal", "Gut", "Hervorragend", "Exzellent", "Meisterwerk"];
+  const BM_GROUPS = ["Waffen", "Rüstung", "Nebenhand", "Taschen & Umhänge", "Sammlerausrüstung"];
+  // cq[id] = { ask: {q: [preis, menge|null, ts, quelle]}, bid: {q: [...]} }  – ask = Caerleon-Angebot, bid = Black-Market-Gebot
+  let cq = (() => { const d = storage.get("cq", {}) || {}; const cut = Date.now() / 1000 - 12 * 3600;
+    for (const id of Object.keys(d)) for (const side of ["ask", "bid"]) for (const q of Object.keys(d[id][side] || {})) if (d[id][side][q][2] < cut) delete d[id][side][q];
+    return d; })();
+  let cqSaveT = null;
+  const cqSave = () => { clearTimeout(cqSaveT); cqSaveT = setTimeout(() => { try { storage.set("cq", cq); } catch (e) { /* voll */ } }, 3000); };
+  const clSeen = new Set();
+  let clNewKeys = new Set();
+  let clStats = { privat: 0, lastPrivat: null, lastPublic: null };
+  const cqPut = (id, side, q, price, amount, ts, src) => {
+    const e = (cq[id] = cq[id] || { ask: {}, bid: {} });
+    const cur = e[side][q];
+    if (cur && cur[2] > ts && !(src === "privat" && cur[3] !== "privat")) return;
+    e[side][q] = [price, amount, ts, src];
+  };
+  /** Öffentliche Daten: alle Qualitäten für Caerleon + Black Market */
+  function clIngestRows(rows) {
+    for (const r of rows) {
+      const q = r.quality || 1;
+      if (r.city === "Caerleon" && r.sell_price_min) { const ts = C.parseDate(r.sell_price_min_date); if (ts) cqPut(r.item_id, "ask", q, r.sell_price_min, null, ts, "öffentlich"); }
+      if (r.city === C.BLACK_MARKET && r.buy_price_max) { const ts = C.parseDate(r.buy_price_max_date); if (ts) cqPut(r.item_id, "bid", q, r.buy_price_max, null, ts, "öffentlich"); }
+      // Runen/Seelen/Relikte & Co. auch für die übrigen Rechner
+      if (r.city === "Caerleon" && q === (settings.quality || 1) && r.sell_price_min) {
+        const ts = C.parseDate(r.sell_price_min_date), k = r.item_id + "|Caerleon", e = store.live[k] || {};
+        if (ts && (!e.sell_ts || ts >= e.sell_ts)) { e.sell = r.sell_price_min; e.sell_ts = ts; store.live[k] = e; }
+      }
+    }
+  }
+  function clIds() {
+    const ids = Object.keys(gd.recipes).filter((id) => BM_GROUPS.includes(gd.recipes[id].group) && (ui.clTiers || [4, 5, 6, 7, 8]).includes(gd.recipes[id].tier));
+    const mats = [];
+    for (const t of ui.clTiers || [4, 5, 6, 7, 8]) for (const m of ENCH_MAT) mats.push(`T${t}_${m}`);
+    return ids.concat(mats);
+  }
+  async function clLoadPublic() {
+    if (busy) { setStatus("Es läuft bereits ein Abruf …"); return; }
+    busy = true; $("cl-load").disabled = true;
+    const ids = clIds();
+    $("cl-status").textContent = `Lade ${S(ids.length)} Items × 5 Qualitäten für Caerleon + Black Market …`;
+    let err = 0;
+    try {
+      err = await store._run("prices", { locations: "Caerleon," + C.BLACK_MARKET, qualities: "1,2,3,4,5" }, ids, (rows) => clIngestRows(rows), 3200,
+        (n, t) => { progress(n, t); $("cl-status").textContent = `Lade öffentliche Preise … ${n}/${t}`; });
+    } catch (e) { err++; }
+    busy = false; $("cl-load").disabled = false; progress(0, 0);
+    clStats.lastPublic = Date.now();
+    store.save(); cqSave();
+    $("cl-status").textContent = err ? `${err} Anfrage(n) fehlgeschlagen – später erneut versuchen.` : "✔ Öffentliche Preise geladen";
+    clRender();
+  }
+
+  // ---- Privater Live-Empfang (Albion Data Client, ws://localhost:8099/ws)
+  let clWs = null, clWsState = "off", clRetry = null;
+  function clLiveSet(on) {
+    ui.clLive = on; saveUi();
+    if (on) clConnect(); else { clearTimeout(clRetry); if (clWs) { try { clWs.close(); } catch (e) { /* egal */ } } clWs = null; clWsState = "off"; }
+    clBadge();
+  }
+  function clConnect() {
+    clearTimeout(clRetry);
+    if (clWs && (clWs.readyState === 0 || clWs.readyState === 1)) return;
+    clWsState = "wait"; clBadge();
+    try { clWs = new WebSocket("ws://localhost:8099/ws"); } catch (e) { clWsState = "err"; clBadge(); return; }
+    clWs.onopen = () => { clWsState = "on"; clBadge(); };
+    clWs.onclose = () => { clWsState = ui.clLive ? "wait" : "off"; clBadge(); if (ui.clLive) clRetry = setTimeout(clConnect, 5000); };
+    clWs.onerror = () => { /* onclose folgt */ };
+    clWs.onmessage = (ev) => { try { clOnMessage(JSON.parse(ev.data)); } catch (e) { /* unbekannte Nachricht */ } };
+  }
+  function clBadge() {
+    const b = $("cl-badge"); if (!b) return;
+    const ago = clStats.lastPrivat ? Math.round((Date.now() - clStats.lastPrivat) / 1000) : null;
+    b.className = "live-badge" + (clWsState === "on" ? " on" : clWsState === "wait" ? " wait" : "");
+    b.textContent = clWsState === "on" ? `📡 verbunden${ago !== null ? " · Scan vor " + (ago < 60 ? ago + " s" : Math.round(ago / 60) + " min") : ""}`
+      : clWsState === "wait" ? "📡 warte auf Data Client …" : "📡 aus";
+    $("cl-live").textContent = ui.clLive ? "📡 Privat-Live aus" : "📡 Privat-Live an";
+  }
+  function clOnMessage(msg) {
+    const topic = String(msg.topic || "");
+    if (!topic.startsWith("marketorders")) return;
+    const orders = (msg.data && (msg.data.Orders || msg.data.orders)) || [];
+    if (!orders.length) return;
+    const ts = Date.now() / 1000;
+    const groups = {};
+    for (const o of orders) {
+      const loc = CL_LOC[String(o.LocationId || "").slice(0, 4)];
+      if (!loc) continue;
+      const id = o.ItemTypeId, q = o.QualityLevel || 1, price = (o.UnitPriceSilver || 0) / 10000, amt = o.Amount || 0;
+      const offer = String(o.AuctionType || "").toLowerCase() === "offer";
+      if (!id || !price) continue;
+      const k = `${id}|${loc}|${q}|${offer ? "o" : "r"}`;
+      const g = groups[k] || (groups[k] = { id, loc, q, offer, price: offer ? Infinity : 0, amt: 0 });
+      if (offer ? price < g.price : price > g.price) { g.price = price; g.amt = amt; }
+      else if (price === g.price) g.amt += amt;
+    }
+    for (const g of Object.values(groups)) {
+      if (g.loc === "Caerleon" && g.offer) cqPut(g.id, "ask", g.q, g.price, g.amt, ts, "privat");
+      if (g.loc === C.BLACK_MARKET && !g.offer) cqPut(g.id, "bid", g.q, g.price, g.amt, ts, "privat");
+      // auch in die normalen Rechner übernehmen (eingestellte Qualität)
+      if (g.q === (settings.quality || 1)) {
+        const key = g.id + "|" + g.loc, e = store.live[key] || {};
+        if (g.offer) { e.sell = g.price; e.sell_ts = ts; } else { e.buy = g.price; e.buy_ts = ts; }
+        store.live[key] = e;
+      }
+    }
+    clStats.privat += orders.length; clStats.lastPrivat = Date.now();
+    cqSave(); clQueueRender();
+  }
+  let clRT = null, clStoreT = null;
+  function clQueueRender() {
+    clearTimeout(clRT); clRT = setTimeout(() => { if (ui.view === "silver" && ui.sMode === "cl") clRender(); else clBadge(); }, 700);
+    clearTimeout(clStoreT); clStoreT = setTimeout(() => store.save(), 5000);
+  }
+
+  // ---- Berechnung
+  function clTrades() {
+    const nowS = Date.now() / 1000, maxAge = Math.max(1, Number(ui.clAge) || 30) * 60, minP = Number(ui.clMin) || 0;
+    const tax = C.sellFee(settings, "instant");
+    const tiers = ui.clTiers || [4, 5, 6, 7, 8];
+    const tierOf = (id) => (gd.recipes[id] ? gd.recipes[id].tier : parseInt(String(id).slice(1), 10));
+    const fresh = (x) => x && nowS - x[2] <= maxAge;
+    const bestBid = (e, qa) => { let best = null; for (const [qb, B] of Object.entries(e.bid || {})) { if (+qb > qa || !fresh(B)) continue; if (!best || B[0] > best.B[0]) best = { qb: +qb, B }; } return best; };
+    const out = [];
+    for (const [id, e] of Object.entries(cq)) {
+      if (!tiers.includes(tierOf(id)) || !e.ask) continue;
+      if (!gd.recipes[id] || !BM_GROUPS.includes(gd.recipes[id].group)) continue;   // BM kauft nur Ausrüstung
+      for (const [qs, A] of Object.entries(e.ask)) {
+        if (!fresh(A)) continue;
+        const qa = +qs, bb = bestBid(e, qa);
+        if (!bb) continue;
+        const net = bb.B[0] * (1 - tax), profit = net - A[0];
+        if (profit < minP) continue;
+        const qty = A[1] && bb.B[1] ? Math.min(A[1], bb.B[1]) : (A[1] || bb.B[1] || null);
+        out.push({ type: "flip", id, qa, qb: bb.qb, ask: A[0], bid: bb.B[0], profit, margin: A[0] ? profit / A[0] * 100 : 0, qty,
+          total: profit * (qty || 1), age: nowS - Math.min(A[2], bb.B[2]), priv: A[3] === "privat" || bb.B[3] === "privat", key: `f|${id}|${qa}|${A[0]}|${bb.B[0]}` });
+      }
+    }
+    if (ui.clEnch) {
+      const matPrice = (mid) => {
+        const a = cq[mid] && cq[mid].ask && cq[mid].ask[1];
+        if (fresh(a)) return { p: a[0], amt: a[1] };
+        const [p, src, ts] = store.get(mid, "Caerleon", "sell", maxAge / 3600);
+        return p && src !== "alt" ? { p, amt: null } : null;
+      };
+      for (const b of Object.keys(enchData.c)) {
+        const r = gd.recipes[b];
+        if (!r || !BM_GROUPS.includes(r.group) || !tiers.includes(r.tier)) continue;
+        const n = enchData.c[b];
+        for (let s = 0; s < 3; s++) {
+          const src = enchId(b, s), dst = enchId(b, s + 1), es = cq[src], ed = cq[dst];
+          if (!es || !ed) continue;
+          const mp = matPrice(`T${r.tier}_${ENCH_MAT[s]}`);
+          if (!mp) continue;
+          for (const [qs, A] of Object.entries(es.ask || {})) {
+            if (!fresh(A)) continue;
+            const qa = +qs, bb = bestBid(ed, qa);
+            if (!bb) continue;
+            const cost = A[0] + n * mp.p, profit = bb.B[0] * (1 - tax) - cost;
+            if (profit < minP) continue;
+            const qty = A[1] && bb.B[1] ? Math.min(A[1], bb.B[1]) : (A[1] || bb.B[1] || null);
+            out.push({ type: "ench", id: src, dst, s, n, mat: `T${r.tier}_${ENCH_MAT[s]}`, mp: mp.p, qa, qb: bb.qb, ask: A[0], bid: bb.B[0], cost, profit,
+              margin: cost ? profit / cost * 100 : 0, qty, total: profit * (qty || 1), age: nowS - Math.min(A[2], bb.B[2]),
+              priv: A[3] === "privat" || bb.B[3] === "privat", key: `e|${src}|${qa}|${A[0]}|${bb.B[0]}` });
+          }
+        }
+      }
+    }
+    return out.sort((a, b) => b.total - a.total);
+  }
+
+  // ---- Anzeige
+  function clAgeTxt(sec) { return sec < 90 ? `${Math.max(0, Math.round(sec))} s` : sec < 5400 ? `${Math.round(sec / 60)} min` : `${C.fmtNum(sec / 3600, 1)} Std.`; }
+  function clRender() {
+    if (!gd) return;
+    $("cl-age").value = ui.clAge === undefined ? 30 : ui.clAge; $("cl-min").value = ui.clMin === undefined ? 500 : ui.clMin;
+    $("cl-ench").checked = !!ui.clEnch;
+    const tb = $("cl-tiers"); tb.innerHTML = "";
+    if (!ui.clTiers) ui.clTiers = [4, 5, 6, 7, 8];
+    [4, 5, 6, 7, 8].forEach((t) => tb.append(el("button", { class: ui.clTiers.includes(t) ? "on" : "",
+      on: { click: () => { const i = ui.clTiers.indexOf(t); if (i >= 0) ui.clTiers.splice(i, 1); else ui.clTiers.push(t); saveUi(); clRender(); } } }, "T" + t)));
+    $("cl-sum").textContent = `max. ${ui.clAge === undefined ? 30 : ui.clAge} min alt · ab ${S(ui.clMin === undefined ? 500 : ui.clMin)}/Stk`;
+    clBadge();
+    const list = clTrades();
+    const nowKeys = new Set(list.map((x) => x.key));
+    clNewKeys = new Set([...nowKeys].filter((k) => clSeen.size && !clSeen.has(k)));
+    nowKeys.forEach((k) => clSeen.add(k));
+    const box = $("cl-list"); box.innerHTML = "";
+    const t = $("cl-tiles"); t.innerHTML = "";
+    const sum = list.slice(0, 30).reduce((a, x) => a + x.total, 0);
+    const nAsk = Object.values(cq).reduce((a, e) => a + Object.keys(e.ask || {}).length, 0), nBid = Object.values(cq).reduce((a, e) => a + Object.keys(e.bid || {}).length, 0);
+    t.append(tile(String(list.length), "Trades mit Gewinn", list.length ? "good" : ""), tile(list.length ? S(sum) : "–", "Gewinn der Top 30 (geschätzt)", sum > 0 ? "good" : ""),
+      tile(S(nBid), "BM-Gebote bekannt"), tile(S(nAsk), "Caerleon-Angebote bekannt"));
+    if (!list.length) {
+      box.append(el("div", { class: "card empty" }, nAsk + nBid ? "Gerade kein Trade über deinem Mindestgewinn – Filter senken, Preise neu laden oder im Spiel weiter scannen."
+        : "Noch keine Daten. „⟳ Öffentliche Preise“ tippen – oder Privat-Live einrichten (unten) und im Spiel scannen."));
+      return;
+    }
+    list.slice(0, 60).forEach((x) => {
+      const isNew = clNewKeys.has(x.key);
+      const qtyTxt = x.qty ? `${S(x.qty)} Stk` : "Menge ?";
+      const head = x.type === "flip" ? gd.label(x.id) : `✨ ${gd.label(x.id)} → ${gd.label(x.dst)}`;
+      box.append(el("div", { class: "cl-row" + (isNew ? " new" : "") + (x.type === "ench" ? " ench" : ""),
+        on: { click: async () => { const name = gd.name(x.id); try { await navigator.clipboard.writeText(name); setStatus(`„${name}“ kopiert – im Spiel ins Suchfeld einfügen`); } catch (e) { setStatus(name); } } } },
+        el("div", { class: "h" }, el("div", { class: "name" }, (isNew ? "🆕 " : "") + head), el("div", { class: "profit num" }, `+${S(x.profit)}/Stk`)),
+        el("div", { class: "line" }, x.type === "flip"
+          ? `Kaufen in Caerleon: ${S(x.ask)} (${QNAME[x.qa]}) → an BM verkaufen: ${S(x.bid)} (Gebot ${QNAME[x.qb]})`
+          : `Kaufen ${S(x.ask)} (${QNAME[x.qa]}) + ${S(x.n)} × ${gd.name(x.mat)} à ${S(x.mp)} → BM ${S(x.bid)} (${QNAME[x.qb]})`),
+        el("div", { class: "line" }, `Marge ${C.fmtNum(x.margin)} % · ${qtyTxt}${x.qty ? " · gesamt +" + S(x.total) : ""} · vor ${clAgeTxt(x.age)} · `,
+          el("span", { class: x.priv ? "src-p" : "" }, x.priv ? "📡 privat" : "öffentlich"))));
+    });
+    box.append(el("div", { class: "small muted", style: "margin:6px 2px" }, "Antippen kopiert den Namen fürs Suchfeld im Spiel. Gebot im Spiel kurz prüfen – andere Händler sind auch unterwegs."));
+  }
+
   // ------------------------------------------------------------ Buch-Auswertung
   function renderEval() {
     const ranges = [[7, "7 Tage"], [30, "30 Tage"], [0, "Alles"]];
@@ -2962,7 +3184,7 @@
     // Silber-Finder
     [...$("s-mode").children].forEach((b) => b.addEventListener("click", () => {
       ui.sMode = b.dataset.m; if (ui.sMode === "bm" && !ui.sGroups.some((g) => ["Waffen", "Rüstung", "Nebenhand"].includes(g))) ui.sGroups.push("Waffen", "Rüstung");
-      saveUi(); silver = null; renderSilver();
+      saveUi(); if (ui.sMode !== "cl") silver = null; renderSilver();
     }));
     [[10000, "10 k"], [30000, "30 k"], [100000, "100 k"]].forEach(([v, l]) =>
       $("s-fquick").append(el("button", { on: { click: () => { ui.sFocus = v; $("s-focus").value = v; saveUi(); } } }, l)));
@@ -2977,6 +3199,12 @@
     sbind("s-focus", "sFocus", true); sbind("s-fce", "sFce", true); sbind("s-city", "sCity"); sbind("s-buymode", "sBuyMode");
     sbind("s-margin", "sMargin", true); sbind("s-days", "sDays", true); sbind("s-age", "sAge", true); sbind("s-chain", "sChain"); sbind("s-sellmode", "sSellMode"); sbind("s-share", "sShare", true); sbind("s-enchup", "sEnchUp");
     $("s-run").addEventListener("click", runSilver);
+    $("cl-load").addEventListener("click", clLoadPublic);
+    $("cl-live").addEventListener("click", () => clLiveSet(!ui.clLive));
+    $("cl-age").addEventListener("change", (e) => { ui.clAge = Math.max(1, Number(e.target.value) || 30); saveUi(); clRender(); });
+    $("cl-min").addEventListener("change", (e) => { ui.clMin = Math.max(0, Number(e.target.value) || 0); saveUi(); clRender(); });
+    $("cl-ench").addEventListener("change", (e) => { ui.clEnch = e.target.checked; saveUi(); clRender(); });
+    setInterval(() => { if (ui.view === "silver" && ui.sMode === "cl") clRender(); }, 30000);
     $("s-shop").addEventListener("click", silverToShop);
 
     // Crafting
@@ -3082,6 +3310,7 @@
     }
     render();
     esWire(); esRender();
+    if (ui.clLive) clConnect();
     show(ui.view || "silver");
     setStatus(hasPrices() ? "Gespeicherte Preise vorhanden · beim Suchen/Laden werden sie aktualisiert" : "Bereit – Preise werden beim Suchen geladen");
     registerSW();

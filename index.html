@@ -13,7 +13,7 @@
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="icon" type="image/png" href="icons/icon-64.png">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="stylesheet" href="style.css?v=1.9.4">
+<link rel="stylesheet" href="style.css?v=2.0.0">
 </head>
 <body>
 <header class="top">
@@ -28,7 +28,51 @@
     <div class="seg" id="s-mode" style="margin-bottom:8px">
       <button data-m="safe">🛡 100 % sicher</button>
       <button data-m="bm">🐎 mit Black Market</button>
+      <button data-m="cl">🏰 Caerleon</button>
     </div>
+    <div id="cl-pane" style="display:none">
+      <div class="card">
+        <div class="row" style="justify-content:space-between;gap:8px;flex-wrap:nowrap">
+          <b>🏰 Caerleon ↔ Black Market</b>
+          <span class="live-badge" id="cl-badge">📡 aus</span>
+        </div>
+        <div class="small muted" style="margin-top:2px">Am Caerleon-Markt kaufen und sofort an den Black Market verkaufen – alles in einer Stadt, kein Transport.</div>
+        <div class="row" style="gap:8px;margin-top:10px;flex-wrap:nowrap">
+          <button class="btn primary" id="cl-load" style="flex:1">⟳ Öffentliche Preise</button>
+          <button class="btn" id="cl-live" style="flex:1">📡 Privat-Live an</button>
+        </div>
+        <div class="progress"><div></div></div>
+        <div class="small" id="cl-status" style="margin-top:6px"></div>
+        <details class="opts" style="margin-top:8px">
+          <summary>Filter <span class="muted small" id="cl-sum"></span></summary>
+          <div class="grid">
+            <div class="field"><label>Max. Preisalter (Minuten)</label><input id="cl-age" type="number" inputmode="numeric" value="30"></div>
+            <div class="field"><label>Mind. Gewinn pro Stück</label><input id="cl-min" type="number" inputmode="numeric" value="500"></div>
+            <div class="field full"><label>Tiers</label><div class="mini-chips" id="cl-tiers"></div></div>
+            <div class="full"><label class="toggle"><span>✨ Verzaubern mitprüfen <span class="muted small">(.x kaufen + Runen → .x+1 an den BM)</span></span><input type="checkbox" id="cl-ench"></label></div>
+          </div>
+        </details>
+      </div>
+      <div class="tiles" id="cl-tiles"></div>
+      <div id="cl-list"></div>
+      <details class="card" id="cl-help">
+        <summary><b>📡 Private Live-Daten einrichten</b> <span class="muted small">– nur du bekommst deine Scans</span></summary>
+        <ol class="help-steps">
+          <li><b>Albion Data Client</b> auf dem PC installieren (<a href="https://europe.albion-online-data.com/client" target="_blank" rel="noopener">Download</a>).</li>
+          <li>Im Ordner des Clients eine Datei <code>config.yaml</code> anlegen mit:
+            <pre>EnableWebsockets: true
+AllowedWebsocketHosts:
+  - hedtes.github.io
+  - localhost</pre></li>
+          <li>Den Client so starten, dass <b>nichts öffentlich hochgeladen</b> wird: <code>albiondata-client -i noop</code><br>
+            <span class="muted small">Windows: Verknüpfung → Eigenschaften → bei „Ziel“ hinten <code>-i noop</code> anhängen.</span></li>
+          <li>Dieses Tool <b>am selben PC im Browser</b> öffnen (Chrome, Edge oder Firefox) → Silber → 🏰 Caerleon → <b>„📡 Privat-Live an“</b>.</li>
+          <li>Im Spiel in Caerleon: <b>Black Market</b> öffnen und Kategorien durchklicken, dann den <b>Caerleon-Markt</b> (Kaufen-Reiter) durchblättern. Treffer erscheinen sofort – mit echter Stückzahl.</li>
+        </ol>
+        <div class="small muted">Deine Scans landen nur in diesem Browser. Mit <code>-i noop</code> schickt der Client nichts an die öffentliche Datenbank – andere sehen deine Daten nicht. Am Handy kommen die Live-Daten nicht an (Browser erlauben die Verbindung nur am selben PC).</div>
+      </details>
+    </div>
+    <div id="s-main">
     <div class="muted small hint" id="s-mode-info" style="margin:0 2px 10px"></div>
 
     <div class="card qty">
@@ -78,6 +122,7 @@
     <div class="list" id="s-order"></div>
     <h3 id="s-ench-h" style="display:none;margin:20px 2px 8px;font-size:15px">✨ Verzaubern lohnt sich</h3>
     <div class="list" id="s-ench"></div>
+      </div>
   </section>
 
   <!-- ===================================================== Refining -->
@@ -517,7 +562,7 @@
 <div class="toast note" id="note"><span id="note-text"></span><button id="note-btn">Ansehen</button></div>
 <div class="toast" id="toast"><span id="toast-text"></span><button id="toast-btn">Neu laden</button></div>
 
-<script src="core.js?v=1.9.4"></script>
-<script src="app.js?v=1.9.4"></script>
+<script src="core.js?v=2.0.0"></script>
+<script src="app.js?v=2.0.0"></script>
 </body>
 </html>

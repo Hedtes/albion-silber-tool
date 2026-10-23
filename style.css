@@ -333,3 +333,20 @@ table.ench-routes tr.sel td { color: var(--gold-lt); }
 .chain-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-top: 1px dashed var(--line); }
 .chain-row .t { flex: 1; min-width: 0; }
 .chain-buy .chain-row:first-of-type { border-top: 0; }
+
+/* ---------- Caerleon */
+.live-badge { font-size: 12px; font-weight: 700; padding: 4px 8px; border-radius: 999px; background: var(--panel2); border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.live-badge.on { background: var(--pos-bg); border-color: rgba(63,185,107,.5); color: var(--top); }
+.live-badge.wait { color: #f0b85a; }
+.help-steps { margin: 8px 0 8px 18px; padding: 0; font-size: 13.5px; }
+.help-steps li { margin: 6px 0; }
+.help-steps pre { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 8px; font-size: 12.5px; overflow-x: auto; }
+code { background: var(--panel2); padding: 1px 5px; border-radius: 5px; font-size: 12.5px; }
+.cl-row { background: var(--panel); border: 1px solid var(--line); border-left: 5px solid var(--pos); border-radius: 12px; padding: 10px 12px; margin-bottom: 8px; cursor: pointer; }
+.cl-row.new { box-shadow: 0 0 0 2px rgba(95,220,140,.55); }
+.cl-row.ench { border-left-color: var(--manual); }
+.cl-row .h { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.cl-row .name { font-weight: 700; }
+.cl-row .profit { font-weight: 800; color: var(--top); white-space: nowrap; }
+.cl-row .line { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+.cl-row .src-p { color: var(--top); font-weight: 700; }

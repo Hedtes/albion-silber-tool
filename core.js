@@ -224,8 +224,9 @@
         const key = r.item_id + "|" + loc;
         const e = this.live[key] || {};
         const sd = parseDate(r.sell_price_min_date), bd = parseDate(r.buy_price_max_date);
-        if (r.sell_price_min && sd) { e.sell = r.sell_price_min; e.sell_ts = sd; }
-        if (r.buy_price_max && bd) { e.buy = r.buy_price_max; e.buy_ts = bd; }
+        // nur übernehmen, wenn neuer als das, was schon da ist (z. B. eigene Live-Scans)
+        if (r.sell_price_min && sd && !(e.sell_ts && e.sell_ts > sd)) { e.sell = r.sell_price_min; e.sell_ts = sd; delete e.sell_p; }
+        if (r.buy_price_max && bd && !(e.buy_ts && e.buy_ts > bd)) { e.buy = r.buy_price_max; e.buy_ts = bd; delete e.buy_p; }
         if (Object.keys(e).length) this.live[key] = e;
       }
     }
@@ -291,7 +292,15 @@
       const ts = e[kind + "_ts"];
       if (maxAge === undefined || maxAge === null) maxAge = this.settings.max_age_hours;
       const h = ageHours(ts);
-      return [e[kind], h !== null && h <= maxAge ? "live" : "alt", ts];
+      return [e[kind], h !== null && h <= maxAge ? (e[kind + "_p"] ? "privat" : "live") : "alt", ts];
+    }
+    /** Eigene Live-Daten (Albion Data Client, privat) – gewinnt, wenn neuer. */
+    setLive(id, loc, kind, price, ts, priv) {
+      const k = id + "|" + loc, e = this.live[k] || {};
+      if (e[kind + "_ts"] && e[kind + "_ts"] > ts) return;
+      e[kind] = price; e[kind + "_ts"] = ts;
+      if (priv) e[kind + "_p"] = 1; else delete e[kind + "_p"];
+      this.live[k] = e;
     }
 
     setManual(id, loc, kind, price) {

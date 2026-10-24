@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const C = window.Core;
-  const VERSION = "2.0.0";
+  const VERSION = "2.1.0";
   const $ = (id) => document.getElementById(id);
   const S = C.fmtSilver;
   const SLOW_DAYS = 7;
@@ -735,7 +735,7 @@
         .filter((m) => m.crafts > 0).sort((a, b) => b.perDay - a.perDay).slice(0, 10);
     }
     silverShowAll = false;
-    silver = { plan: res.plan, more, ench, orderList, stats, budgetLeft: res.budgetLeft, focusLeft: res.focusLeft, checked: ids.length, found: items.length, at: Date.now() };
+    silver = { ids, plan: res.plan, more, ench, orderList, stats, budgetLeft: res.budgetLeft, focusLeft: res.focusLeft, checked: ids.length, found: items.length, at: Date.now() };
     storage.set("silver", null);
     renderSilver();
   }
@@ -1580,9 +1580,11 @@
   const pad2 = (n) => String(n).padStart(2, "0");
   const fmtWhen = (ts) => { const d = new Date(ts); return `${dayLabel(dayKey(ts))} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
   let noteTimer = null;
-  function note(text) {
+  function note(text, action, label) {
     $("note-text").textContent = text;
     $("note").classList.add("on");
+    $("note-btn").textContent = label || "Ansehen";
+    if (action) { $("note-btn").onclick = () => { $("note").classList.remove("on"); action(); }; clearTimeout(noteTimer); noteTimer = setTimeout(() => $("note").classList.remove("on"), 8000); return; }
     $("note-btn").onclick = () => {
       $("note").classList.remove("on"); ui.listPane = "shop"; show("shop");
       setTimeout(() => { const all = document.querySelectorAll("#proj-list .proj"); if (all.length) all[all.length - 1].scrollIntoView({ behavior: "smooth", block: "start" }); }, 150);
@@ -2649,7 +2651,7 @@
   const cqSave = () => { clearTimeout(cqSaveT); cqSaveT = setTimeout(() => { try { storage.set("cq", cq); } catch (e) { /* voll */ } }, 3000); };
   const clSeen = new Set();
   let clNewKeys = new Set();
-  let clStats = { privat: 0, lastPrivat: null, lastPublic: null };
+  let clStats = { privat: 0, lastPrivat: null, lastPublic: null, items: new Set() };
   const cqPut = (id, side, q, price, amount, ts, src) => {
     const e = (cq[id] = cq[id] || { ask: {}, bid: {} });
     const cur = e[side][q];
@@ -2693,7 +2695,7 @@
   }
 
   // ---- Privater Live-Empfang (Albion Data Client, ws://localhost:8099/ws)
-  let clWs = null, clWsState = "off", clRetry = null;
+  let clWs = null, clWsState = "off", clRetry = null, clWaitSince = null;
   function clLiveSet(on) {
     ui.clLive = on; saveUi();
     if (on) clConnect(); else { clearTimeout(clRetry); if (clWs) { try { clWs.close(); } catch (e) { /* egal */ } } clWs = null; clWsState = "off"; }
@@ -2702,21 +2704,53 @@
   function clConnect() {
     clearTimeout(clRetry);
     if (clWs && (clWs.readyState === 0 || clWs.readyState === 1)) return;
-    clWsState = "wait"; clBadge();
+    clWsState = "wait"; if (!clWaitSince) clWaitSince = Date.now(); clBadge();
     try { clWs = new WebSocket("ws://localhost:8099/ws"); } catch (e) { clWsState = "err"; clBadge(); return; }
-    clWs.onopen = () => { clWsState = "on"; clBadge(); };
-    clWs.onclose = () => { clWsState = ui.clLive ? "wait" : "off"; clBadge(); if (ui.clLive) clRetry = setTimeout(clConnect, 5000); };
+    const me = clWs;
+    const to = setTimeout(() => { if (me.readyState === 0) { try { me.close(); } catch (e) { /* egal */ } if (clWs === me) { clWs = null; if (ui.clLive) clRetry = setTimeout(clConnect, 1500); } } }, 4000);
+    clWs.onopen = () => { clearTimeout(to); clWsState = "on"; clWaitSince = null; clBadge(); };
+    clWs.onclose = () => { clearTimeout(to); if (clWs !== me) return; clWs = null; clWsState = ui.clLive ? "wait" : "off"; clBadge(); if (ui.clLive) { clearTimeout(clRetry); clRetry = setTimeout(clConnect, 3000); } };
     clWs.onerror = () => { /* onclose folgt */ };
     clWs.onmessage = (ev) => { try { clOnMessage(JSON.parse(ev.data)); } catch (e) { /* unbekannte Nachricht */ } };
   }
   function clBadge() {
+    const hb = $("live-hdr");
+    if (hb) {
+      hb.style.display = ui.clLive ? "" : "none";
+      hb.className = "live-badge hdr" + (clWsState === "on" ? " on" : clWsState === "wait" ? " wait" : "");
+      hb.textContent = clWsState === "on" ? "📡 Live" : "📡 …";
+    }
+    const sb = $("live-set");
+    if (sb) {
+      sb.checked = !!ui.clLive;
+      $("live-set-info").innerHTML = !ui.clLive ? "Aus – die Rechner nutzen nur öffentliche Preise." :
+        clWsState === "on" ? `✔ Verbunden mit deinem Albion Data Client · ${S(clStats.items.size)} Items/Märkte privat gescannt${clStats.lastPrivat ? " · letzter Scan vor " + clAgeTxt((Date.now() - clStats.lastPrivat) / 1000) : ""}`
+        : "⏳ Warte auf den Albion Data Client … (Starter <a href='download/Albion-Silber-Privat.bat' download>Albion-Silber-Privat.bat</a> am PC ausführen)";
+    }
     const b = $("cl-badge"); if (!b) return;
     const ago = clStats.lastPrivat ? Math.round((Date.now() - clStats.lastPrivat) / 1000) : null;
     b.className = "live-badge" + (clWsState === "on" ? " on" : clWsState === "wait" ? " wait" : "");
     b.textContent = clWsState === "on" ? `📡 verbunden${ago !== null ? " · Scan vor " + (ago < 60 ? ago + " s" : Math.round(ago / 60) + " min") : ""}`
       : clWsState === "wait" ? "📡 warte auf Data Client …" : "📡 aus";
     $("cl-live").textContent = ui.clLive ? "📡 Privat-Live aus" : "📡 Privat-Live an";
+    const d = $("cl-diag");
+    if (!d) return;
+    let h = "";
+    if (clWsState === "wait" && clWaitSince && Date.now() - clWaitSince > 8000) {
+      h = `<b>Keine Verbindung zum Albion Data Client.</b> Prüfen:<ul>
+        <li>Läuft der Client? Am einfachsten mit <a href="download/Albion-Silber-Privat.bat" download>Albion-Silber-Privat.bat</a> starten.</li>
+        <li>Liegt <code>config.yaml</code> im selben Ordner wie der Starter? (legt der Starter selbst an)</li>
+        <li>Browser am <b>selben PC</b>: Chrome, Edge oder Firefox. Brave/Safari blockieren die Verbindung oft.</li>
+        <li>Am Handy geht Privat-Live nicht – nur am PC.</li></ul>`;
+    } else if (clWsState === "on" && !clStats.lastPrivat) {
+      h = "✔ Verbunden. Jetzt im Spiel in Caerleon den <b>Black Market</b> öffnen und Kategorien durchklicken, danach den <b>Markt</b> (Kaufen) – die Daten kommen sofort hier an.";
+    } else if (clWsState === "on" && clStats.lastPrivat) {
+      h = `✔ ${S(clStats.privat)} Marktdaten privat empfangen.`;
+    }
+    d.innerHTML = h;
+    d.style.display = h ? "" : "none";
   }
+  setInterval(() => { if (ui.clLive) clBadge(); }, 3000);
   function clOnMessage(msg) {
     const topic = String(msg.topic || "");
     if (!topic.startsWith("marketorders")) return;
@@ -2739,20 +2773,38 @@
       if (g.loc === "Caerleon" && g.offer) cqPut(g.id, "ask", g.q, g.price, g.amt, ts, "privat");
       if (g.loc === C.BLACK_MARKET && !g.offer) cqPut(g.id, "bid", g.q, g.price, g.amt, ts, "privat");
       // auch in die normalen Rechner übernehmen (eingestellte Qualität)
-      if (g.q === (settings.quality || 1)) {
-        const key = g.id + "|" + g.loc, e = store.live[key] || {};
-        if (g.offer) { e.sell = g.price; e.sell_ts = ts; } else { e.buy = g.price; e.buy_ts = ts; }
-        store.live[key] = e;
-      }
+      if (g.q === (settings.quality || 1)) store.setLive(g.id, g.loc, g.offer ? "sell" : "buy", g.price, ts, true);
+      clStats.items.add(g.id + "|" + g.loc);
     }
     clStats.privat += orders.length; clStats.lastPrivat = Date.now();
     cqSave(); clQueueRender();
   }
   let clRT = null, clStoreT = null;
   function clQueueRender() {
-    clearTimeout(clRT); clRT = setTimeout(() => { if (ui.view === "silver" && ui.sMode === "cl") clRender(); else clBadge(); }, 700);
+    clearTimeout(clRT); clRT = setTimeout(liveRefresh, 1200);
     clearTimeout(clStoreT); clStoreT = setTimeout(() => store.save(), 5000);
   }
+  /** Neue eigene Marktdaten → alle Rechner mit den frischen Preisen neu rechnen + profitable Trades melden. */
+  function liveRefresh() {
+    clBadge();
+    const a = document.activeElement;
+    if (a && (a.tagName === "INPUT" || a.tagName === "SELECT") || $("qp").classList.contains("on")) { clRT = setTimeout(liveRefresh, 2000); return; }
+    const v = ui.view;
+    if (v === "silver" && ui.sMode === "cl") clRender();
+    else if (v === "silver" && silver && silver.ids) finishSilver(silver.ids);
+    else if (v === "refine") render();
+    else if (v === "alch") { renderAlch(); abRender(); }
+    else if (v === "craft") renderCraft();
+    // Alarm: neuer profitabler Caerleon-Trade, auch wenn man gerade woanders ist
+    if (!(v === "silver" && ui.sMode === "cl")) {
+      const top = clTrades().filter((x) => x.priv && !clAlerted.has(x.key)).slice(0, 1)[0];
+      if (top) {
+        clAlerted.add(top.key);
+        note(`🔔 Trade: ${gd.name(top.id)} +${S(top.profit)}/Stk${top.qty ? " × " + S(top.qty) : ""}`, () => { ui.sMode = "cl"; saveUi(); show("silver"); }, "Ansehen");
+      }
+    }
+  }
+  const clAlerted = new Set();
 
   // ---- Berechnung
   function clTrades() {
@@ -3044,6 +3096,7 @@
     const hb = el("input", { type: "checkbox", checked: !!ui.hints, on: { change: () => { ui.hints = hb.checked; saveUi(); applyHints(); } } });
     g.prepend(el("label", { class: "toggle full" }, el("span", {}, "Erklärtexte anzeigen ", el("span", { class: "muted small" }, "(aus = aufgeräumte Ansicht)")), hb));
     $("app-version").textContent = VERSION;
+    clBadge();
   }
   function applyHints() { document.body.classList.toggle("no-hints", !ui.hints); }
   function saveSettings() { storage.set("settings", settings); render(); }
@@ -3201,6 +3254,8 @@
     $("s-run").addEventListener("click", runSilver);
     $("cl-load").addEventListener("click", clLoadPublic);
     $("cl-live").addEventListener("click", () => clLiveSet(!ui.clLive));
+    $("live-set").addEventListener("change", (e) => clLiveSet(e.target.checked));
+    $("live-hdr").addEventListener("click", () => { ui.sMode = "cl"; saveUi(); show("silver"); });
     $("cl-age").addEventListener("change", (e) => { ui.clAge = Math.max(1, Number(e.target.value) || 30); saveUi(); clRender(); });
     $("cl-min").addEventListener("change", (e) => { ui.clMin = Math.max(0, Number(e.target.value) || 0); saveUi(); clRender(); });
     $("cl-ench").addEventListener("change", (e) => { ui.clEnch = e.target.checked; saveUi(); clRender(); });
@@ -3310,6 +3365,10 @@
     }
     render();
     esWire(); esRender();
+    if (location.hash === "#caerleon") {   // vom Starter „Albion-Silber-Privat.bat“
+      ui.view = "silver"; ui.sMode = "cl"; ui.clLive = true; saveUi();
+      history.replaceState(null, "", location.pathname);
+    }
     if (ui.clLive) clConnect();
     show(ui.view || "silver");
     setStatus(hasPrices() ? "Gespeicherte Preise vorhanden · beim Suchen/Laden werden sie aktualisiert" : "Bereit – Preise werden beim Suchen geladen");

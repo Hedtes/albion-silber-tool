@@ -13,13 +13,12 @@
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="icon" type="image/png" href="icons/icon-64.png">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="stylesheet" href="style.css?v=2.1.0">
+<link rel="stylesheet" href="style.css?v=2.2.0">
 </head>
 <body>
 <header class="top">
   <img src="icons/icon-64.png" alt="">
   <h1>ALBION SILBER TOOL</h1>
-  <button class="live-badge hdr" id="live-hdr" style="display:none">📡</button>
   <span class="badge" id="premium-badge"></span>
 </header>
 
@@ -35,16 +34,13 @@
       <div class="card">
         <div class="row" style="justify-content:space-between;gap:8px;flex-wrap:nowrap">
           <b>🏰 Caerleon ↔ Black Market</b>
-          <span class="live-badge" id="cl-badge">📡 aus</span>
         </div>
         <div class="small muted" style="margin-top:2px">Am Caerleon-Markt kaufen und sofort an den Black Market verkaufen – alles in einer Stadt, kein Transport.</div>
         <div class="row" style="gap:8px;margin-top:10px;flex-wrap:nowrap">
           <button class="btn primary" id="cl-load" style="flex:1">⟳ Öffentliche Preise</button>
-          <button class="btn" id="cl-live" style="flex:1">📡 Privat-Live an</button>
         </div>
         <div class="progress"><div></div></div>
         <div class="small" id="cl-status" style="margin-top:6px"></div>
-        <div class="cl-diag" id="cl-diag" style="display:none"></div>
         <details class="opts" style="margin-top:8px">
           <summary>Filter <span class="muted small" id="cl-sum"></span></summary>
           <div class="grid">
@@ -57,23 +53,6 @@
       </div>
       <div class="tiles" id="cl-tiles"></div>
       <div id="cl-list"></div>
-      <details class="card" id="cl-help">
-        <summary><b>📡 Private Live-Daten einrichten</b> <span class="muted small">– nur du bekommst deine Scans</span></summary>
-        <ol class="help-steps">
-          <li><b>Albion Data Client</b> auf dem PC installieren (<a href="https://europe.albion-online-data.com/client" target="_blank" rel="noopener">Download</a>) – Npcap mitinstallieren, wenn gefragt.</li>
-          <li><b>Starter herunterladen:</b> <a href="download/Albion-Silber-Privat.bat" download><b>Albion-Silber-Privat.bat</b></a> – in einen eigenen Ordner legen, z. B. <code>Dokumente\AlbionSilber</code>.</li>
-          <li><b>Rechtsklick</b> auf den Starter → <b>„Als Administrator ausführen“</b> (<a href="download/Albion-Silber-Privat.txt" target="_blank">Inhalt vorher ansehen</a> – lädt nichts herunter, kein PowerShell). Er schaltet den öffentlichen Autostart des Clients ab, legt <code>config.yaml</code> an, startet den Client <b>privat</b> (<code>-i noop</code>) und öffnet dieses Tool.</li>
-          <li>Oben rechts muss <b>„📡 verbunden“</b> stehen.</li>
-          <li>Im Spiel in Caerleon: <b>Black Market</b> öffnen und Kategorien durchklicken, dann den <b>Caerleon-Markt</b> (Kaufen-Reiter) durchblättern. Treffer erscheinen sofort – mit echter Stückzahl.</li>
-        </ol>
-        <details style="margin:6px 0"><summary class="small">Lieber von Hand einrichten?</summary>
-          <div class="small">Im Ordner, aus dem du den Client startest, <code>config.yaml</code> anlegen:</div>
-          <pre>EnableWebsockets: true
-AllowedWebsocketHosts:
-  - hedtes.github.io
-  - localhost</pre>
-          <div class="small">Client mit <code>albiondata-client.exe -i noop</code> starten und die geplante Aufgabe „Albion Data Client“ (Autostart) deaktivieren – die lädt sonst öffentlich hoch.</div>
-        </details>
         <div class="small muted">Deine Scans landen nur in diesem Browser. Mit <code>-i noop</code> schickt der Client nichts an die öffentliche Datenbank – andere sehen deine Daten nicht. Am Handy kommen die Live-Daten nicht an (Browser erlauben die Verbindung nur am selben PC).</div>
       </details>
     </div>
@@ -439,11 +418,7 @@ AllowedWebsocketHosts:
 
   <!-- ===================================================== Einstellungen -->
   <section class="view" id="view-settings">
-    <div class="card">
-      <label class="toggle"><span><b>📡 Eigene Live-Marktdaten</b> <span class="muted small">(Albion Data Client, privat)</span></span><input type="checkbox" id="live-set"></label>
-      <div class="small" id="live-set-info" style="margin-top:4px"></div>
-      <div class="small muted" style="margin-top:6px">Alles, was du im Spiel am Markt öffnest (jede Stadt, Black Market, jede Kategorie), fließt sofort in <b>alle Rechner</b>: Refining, Tränke, Crafting, Silber-Finder und Caerleon. Neue profitable Caerleon-Trades werden gemeldet. Nur am PC, Daten bleiben bei dir. Einrichtung: Silber → 🏰 Caerleon → „Private Live-Daten einrichten“.</div>
-    </div>
+
     <div class="card">
       <b>Allgemein</b>
       <div class="grid" id="settings-grid"></div>
@@ -572,7 +547,7 @@ AllowedWebsocketHosts:
 <div class="toast note" id="note"><span id="note-text"></span><button id="note-btn">Ansehen</button></div>
 <div class="toast" id="toast"><span id="toast-text"></span><button id="toast-btn">Neu laden</button></div>
 
-<script src="core.js?v=2.1.0"></script>
-<script src="app.js?v=2.1.0"></script>
+<script src="core.js?v=2.2.0"></script>
+<script src="app.js?v=2.2.0"></script>
 </body>
 </html>

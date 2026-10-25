@@ -343,15 +343,23 @@
   }
 
   function bestSale(store, s, id, locations, sellMode, maxAge) {
-    let best = null, bestNet = -1;
+    // Märkte, in denen laut Verlauf (fast) nichts verkauft wird, nur nehmen, wenn es keinen anderen gibt –
+    // sonst gewinnt ein einzelnes überteuertes Angebot, das nie jemand kauft.
+    let best = null, bestNet = -1, dead = null, deadNet = -1;
     for (const loc of locations) {
       const mode = loc === BLACK_MARKET ? "instant" : sellMode;
       const sp = salePrice(store, s, id, loc, mode, maxAge);
       if (!sp) continue;
       const net = sp[0] * (1 - sellFee(s, mode));
-      if (net > bestNet) { best = { price: sp[0], loc, mode, ts: sp[1], info: sp[2] }; bestNet = net; }
+      const cand = { price: sp[0], loc, mode, ts: sp[1], info: sp[2] };
+      const pd = sp[2] ? sp[2].per_day : null;
+      if (locations.length > 1 && loc !== BLACK_MARKET && pd !== null && pd !== undefined && pd < 0.5) {
+        if (net > deadNet) { dead = cand; deadNet = net; }
+        continue;
+      }
+      if (net > bestNet) { best = cand; bestNet = net; }
     }
-    return best;
+    return best || dead;
   }
 
   const volumeOk = (perDay, minVol, hideUnknown) => (perDay === null || perDay === undefined) ? !hideUnknown : perDay >= minVol;
@@ -712,15 +720,25 @@
    * items: [{nf: ev|null, f: ev|null}] – pro Item die beste Variante ohne/mit Fokus.
    * cap: max. Stück pro Item (z. B. Verkäufe/Tag × Tage).
    */
+  /**
+   * Wie viele Crafts der Markt aufnimmt: Anteil an den Verkäufen pro Tag.
+   * Seltene, teure Items (z. B. 3 Verkäufe/Tag) bekommen trotzdem 1 Craft, sonst fielen sie immer raus.
+   */
+  function capByVolume(perDay, days, share, amount) {
+    const sold = (perDay || 0) * (days || 1);
+    const n = Math.floor(sold * share / amount);
+    return n < 1 && sold >= 2 * amount ? 1 : n;
+  }
   function planSilver(items, opt) {
     let budget = opt.budget > 0 ? opt.budget : Infinity;
     let focusLeft = opt.focus || 0;
     const plan = [];
     const usedCrafts = {};
     const capCrafts = (ev) => {
-      const pieces = ev.per_day === null || ev.per_day === undefined
-        ? (opt.unknownCap || 0) : Math.floor(ev.per_day * opt.days * (opt.share === undefined ? 1 : opt.share));
-      return Math.min(opt.maxCrafts || 1e9, Math.floor(pieces / ev.rec.amount)) - (usedCrafts[ev.id] || 0);
+      const crafts = ev.per_day === null || ev.per_day === undefined
+        ? Math.floor((opt.unknownCap || 0) / ev.rec.amount)
+        : capByVolume(ev.per_day, opt.days, opt.share === undefined ? 1 : opt.share, ev.rec.amount);
+      return Math.min(opt.maxCrafts || 1e9, crafts) - (usedCrafts[ev.id] || 0);
     };
     const take = (ev) => {
       let n = capCrafts(ev);
@@ -895,7 +913,7 @@
     GameData, PriceStore, bonusCityFor, productionBonus, returnRate, focusCost,
     salesTax, sellFee, buyUnitCost, salePrice, bestSale, volumeOk, calcCraft,
     refineTable, needs, refineAmount, refineDetail, simulate, buyAmount, jointSim, jointBuy, focusSplit, splitBuy, refineChain, buyPlan, craftsFor,
-    evalCraft, upfrontCost, planSilver, makeSolver, cheapPlan,
+    evalCraft, upfrontCost, planSilver, capByVolume, makeSolver, cheapPlan,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = Core;
   else root.Core = Core;

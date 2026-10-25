@@ -358,3 +358,4 @@ code { background: var(--panel2); padding: 1px 5px; border-radius: 5px; font-siz
 .live-badge.hdr { margin-left: auto; margin-right: 6px; cursor: pointer; }
 .src.privat { color: var(--top); font-weight: 700; }
 header.top .live-badge.hdr + .badge { margin-left: 0; }
+#s-mode button { font-size: 12.5px; padding: 8px 3px; }

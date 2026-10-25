@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const C = window.Core;
-  const VERSION = "2.2.0";
+  const VERSION = "2.3.0";
   const $ = (id) => document.getElementById(id);
   const S = C.fmtSilver;
   const SLOW_DAYS = 7;
@@ -30,16 +30,22 @@
     cSell: C.AUTO_MARKET, cSellMode: "order", cFocus: false, cDaily: 0, cStation: 0,
     aKind: "potion", aBase: "T4_POTION_HEAL", aEnch: 0, aQty: 100, aInput: "qty", aBudget: 1000000, aCity: C.AUTO_CITY, aBuy: C.SAME_CITY,
     aSell: C.AUTO_MARKET, aSellMode: "order", aBuyMode: "instant", aDaily: 0, aFocus: false,
-    sMode: "safe", sBudget: 1000000, sFocus: 10000, sFce: 0, sCity: "auto", sBuyMode: "instant", sChain: true,
-    sMargin: 5, sDays: 1, sAge: 12, sGroups: ["Refining", "Tränke", "Essen", "Taschen & Umhänge", "Werkzeuge", "Sammlerausrüstung"], sTiers: [4, 5, 6, 7], sEnchs: [0, 1, 2, 3], sSellMode: "instant", sEnchUp: true,
+    sMode: "route", sBudget: 1000000, sFocus: 10000, sFce: 0, sCity: "auto", sBuyMode: "instant", sChain: true,
+    sMargin: 5, sDays: 1, sAge: 12, sGroups: ["Refining", "Tränke", "Essen", "Taschen & Umhänge", "Werkzeuge", "Sammlerausrüstung"], sTiers: [4, 5, 6, 7], sEnchs: [0, 1, 2, 3], sSellMode: "order", sEnchUp: true,
   }, storage.get("ui", {}));
   const saveUi = () => storage.set("ui", ui);
   /** Dein verfügbarer Fokus (gilt für alle Rechner und den Silber-Finder). */
+  const S_GROUPS_ALL = ["Refining", "Tränke", "Essen", "Waffen", "Rüstung", "Nebenhand", "Taschen & Umhänge", "Sammlerausrüstung", "Werkzeuge"];
   const myFocus = () => Math.max(0, Math.floor(Number(ui.sFocus) || 0));
   if (!ui.sV3) { ui.sV3 = true; if (!Number(ui.sFocus)) ui.sFocus = 10000; saveUi(); }
   if (!ui.sV2) {   // Silber-Finder: einmalig auf die breiteren neuen Standardwerte setzen
     Object.assign(ui, { sV2: true, sMargin: 5, sAge: 12, sSellMode: "instant", sEnchUp: true,
       sGroups: ["Refining", "Tränke", "Essen", "Taschen & Umhänge", "Werkzeuge", "Sammlerausrüstung"], sTiers: [4, 5, 6, 7], sEnchs: [0, 1, 2, 3] });
+    saveUi();
+  }
+  if (!ui.sV4) {  // 2.3: realistische Standardwerte – Verkaufsauftrag, Städte-Route, alle Gruppen
+    Object.assign(ui, { sV4: true, sSellMode: "order", sMode: ui.sMode === "cl" ? "cl" : "route", sCity: "auto",
+      sGroups: S_GROUPS_ALL.slice() });
     saveUi();
   }
   let shop = storage.get("shop", []);
@@ -548,7 +554,7 @@
 
 
   // ------------------------------------------------------------ Silber-Finder
-  const S_GROUPS = ["Refining", "Tränke", "Essen", "Waffen", "Rüstung", "Nebenhand", "Taschen & Umhänge", "Sammlerausrüstung", "Werkzeuge"];
+  const S_GROUPS = S_GROUPS_ALL;
   const ALCH_GROUPS = ["Tränke", "Essen"];
   let silver = null; // letztes Ergebnis
   let silverShowAll = false;
@@ -557,6 +563,33 @@
     // Brecilien gehört dazu (Bonusstadt für Tränke, Taschen, Umhänge); Caerleon nur im Black-Market-Modus
     const pool = C.ROYAL_CITIES.concat(["Brecilien"], ui.sMode === "bm" ? ["Caerleon"] : []);
     return ui.sCity === "auto" ? pool : [ui.sCity];
+  }
+  /**
+   * Welche Wege für ein Item geprüft werden: {Craft-Stadt, Einkaufs-Stadt, Verkaufsmärkte}.
+   * safe  = alles in einer Stadt · route = Material in der billigsten Königsstadt, craften in der Bonusstadt,
+   * verkaufen in der besten Königsstadt (nur blaue/gelbe Zonen) · bm = eine Stadt + Black Market.
+   */
+  function sCombos(id) {
+    const rec = gd.recipes[id];
+    if (ui.sMode !== "route") {
+      // Der Black Market kauft nur Ausrüstung – Ressourcen, Tränke und Essen bleiben in der Stadt
+      const bmOk = ui.sMode === "bm" && !["Refining", "Tränke", "Essen"].includes(rec.group);
+      return sCities().map((city) => ({ city, buyCity: city, sellLocs: bmOk ? [city, C.BLACK_MARKET] : [city] }));
+    }
+    const R = C.ROYAL_CITIES;
+    let crafts;
+    if (ui.sCity !== "auto") crafts = [ui.sCity];
+    else {
+      const bonus = C.bonusCityFor(settings, rec.cat);
+      crafts = bonus && R.includes(bonus) ? [bonus] : R.concat(bonus === "Brecilien" ? ["Brecilien"] : []);
+    }
+    const out = [];
+    for (const city of crafts) {
+      // Brecilien liegt in den Nebeln – dort nur vor Ort kaufen und verkaufen
+      if (!R.includes(city)) { out.push({ city, buyCity: city, sellLocs: [city] }); continue; }
+      for (const buyCity of R) out.push({ city, buyCity, sellLocs: R });
+    }
+    return out;
   }
   function sIds() {
     return Object.keys(gd.recipes).filter((id) => {
@@ -594,24 +627,23 @@
     const memos = {};
     const st = stats || {};
     Object.assign(st, { noPrice: 0, loss: 0, lowMargin: 0, ok: 0 });
+    // Jede Stadt mehr auf dem Weg kostet Zeit: ein anderer Weg muss pro Wechsel ~4 % mehr bringen
+    const adj = (ev) => { const mv = (ev.buyCity !== ev.city ? 1 : 0) + (ev.sellLoc !== ev.city && ev.sellLoc !== C.BLACK_MARKET ? 1 : 0); return ev.profit - Math.abs(ev.profit) * 0.04 * mv; };
     for (const id of ids) {
       let bestNf = null, bestF = null, anyPrice = false, anyProfit = false;
       const isAlch = ALCH_GROUPS.includes(gd.recipes[id].group);
-      for (const city of sCities()) {
+      for (const { city, buyCity, sellLocs } of sCombos(id)) {
         const memo = (memos[city] = memos[city] || {});
-        // Der Black Market kauft nur Ausrüstung – Ressourcen, Tränke und Essen bleiben in der Stadt
-        const bmOk = ui.sMode === "bm" && !["Refining", "Tränke", "Essen"].includes(gd.recipes[id].group);
-        const sellLocs = bmOk ? [city, C.BLACK_MARKET] : [city];
-        const base = Object.assign({}, o, { city, buyCity: city, sellLocs, memo });
+        const base = Object.assign({}, o, { city, buyCity, sellLocs, memo });
         const ev = (focus) => isAlch ? evalAlch(id, Object.assign({}, base, { focus }))
           : C.evalCraft(gd, store, settings, id, Object.assign({}, base, { focus }));
         const nf = ev(false);
         if (nf) { anyPrice = true; if (nf.profit > 0) anyProfit = true; }
-        if (nf && nf.margin >= minM && (!bestNf || nf.profit > bestNf.profit)) bestNf = nf;
+        if (nf && nf.margin >= minM && (!bestNf || adj(nf) > adj(bestNf))) bestNf = nf;
         if (withFocus) {
           const f = ev(true);
           if (f) { anyPrice = true; if (f.profit > 0) anyProfit = true; }
-          if (f && f.margin >= minM && (!bestF || f.profit / Math.max(1, f.focusCost) > bestF.profit / Math.max(1, bestF.focusCost))) bestF = f;
+          if (f && f.margin >= minM && (!bestF || adj(f) / Math.max(1, f.focusCost) > adj(bestF) / Math.max(1, bestF.focusCost))) bestF = f;
         }
       }
       if (bestNf || bestF) { items.push({ id, nf: bestNf, f: bestF }); st.ok++; }
@@ -641,12 +673,18 @@
     if (alchIds.length) alchItemsToLoad(alchIds).forEach((x) => mats.add(x));
     // Verzaubern: Runen/Seelen/Relikte + höhere Stufen der Ausrüstung
     const ench = esForSilver();
-    const locs = sCities().concat(ui.sMode === "bm" ? [C.BLACK_MARKET] : []);
+    const locs = (ui.sMode === "route" ? C.ROYAL_CITIES.concat(["Brecilien"]) : sCities()).concat(ui.sMode === "bm" ? [C.BLACK_MARKET] : []);
     runJobs([[[...new Set(ids.concat([...mats], ench.ids))], locs]], async () => {
       // Verkaufszahlen nur für Items mit Gewinn laden
       const items = silverEvaluate(ids);
       const hist = {};
-      for (const x of items) for (const ev of [x.nf, x.f]) if (ev && ev.profit > 0) (hist[ev.sellLoc] = hist[ev.sellLoc] || new Set()).add(ev.id);
+      const addH = (loc, id) => (hist[loc] = hist[loc] || new Set()).add(id);
+      for (const x of items) for (const ev of [x.nf, x.f]) if (ev && ev.profit > 0) addH(ev.sellLoc, ev.id);
+      // Auch Items, deren Angebot gerade älter ist: mit dem Verlauf (echte Verkaufspreise) können sie trotzdem lohnen
+      silverEvaluate(ids, {}, { maxAge: 168 }).map((x) => x.nf || x.f).filter((ev) => ev && ev.profit > 0)
+        .sort((a, b) => b.profit - a.profit).slice(0, 250).forEach((ev) => addH(ev.sellLoc, ev.id));
+      // Im Routen-Modus kann jeder Königsstadt-Markt der Verkaufsort sein
+      if (ui.sMode === "route") for (const set of Object.values(hist)) for (const id of set) C.ROYAL_CITIES.forEach((l) => addH(l, id));
       esSilverEval().slice(0, 20).forEach((x) => (hist[x.sale.loc] = hist[x.sale.loc] || new Set()).add(x.dst));
       if (ui.sBuyMode !== "order" || (ui.sSellMode || "instant") !== "order")
         silverEvaluate(ids, {}, { buyMode: "order", sellMode: "order" }).map((x) => x.nf).filter((ev) => ev && ev.profit > 0)
@@ -718,7 +756,7 @@
     const more = F <= 0 ? [] : items.filter((x) => x.f && x.f.profit > 0 && x.f.focusCost > 0).map((x) => {
       const ev = x.f;
       const byFocus = Math.floor(F / ev.focusCost);
-      const vol = ev.per_day === null || ev.per_day === undefined ? null : Math.floor(ev.per_day * days * sShare() / ev.rec.amount);
+      const vol = ev.per_day === null || ev.per_day === undefined ? null : C.capByVolume(ev.per_day, days, sShare(), ev.rec.amount);
       const crafts = vol === null ? byFocus : Math.min(byFocus, vol);
       const base = x.nf ? Math.max(0, x.nf.profit) : 0;
       return { ev, crafts, pieces: crafts * ev.rec.amount, profit: crafts * ev.profit, extra: crafts * (ev.profit - base),
@@ -731,7 +769,7 @@
     if (ui.sBuyMode !== "order" || (ui.sSellMode || "instant") !== "order") {
       const its = silverEvaluate(ids, {}, { buyMode: "order", sellMode: "order" });
       orderList = its.map((x) => x.nf).filter((ev) => ev && ev.profit > 0 && ev.per_day)
-        .map((ev) => { const crafts = Math.floor(ev.per_day * sShare() / ev.rec.amount); return { ev, crafts, perDay: ev.profit * crafts }; })
+        .map((ev) => { const crafts = C.capByVolume(ev.per_day, 1, sShare(), ev.rec.amount); return { ev, crafts, perDay: ev.profit * crafts }; })
         .filter((m) => m.crafts > 0).sort((a, b) => b.perDay - a.perDay).slice(0, 10);
     }
     silverShowAll = false;
@@ -744,6 +782,7 @@
     [...$("s-mode").children].forEach((b) => b.classList.toggle("on", b.dataset.m === ui.sMode));
     $("s-mode-info").innerHTML = ui.sMode === "safe"
       ? "Alles in <b>einer Stadt</b>: kaufen, craften, verkaufen. Kein Transport."
+      : ui.sMode === "route" ? "Material in der <b>billigsten Königsstadt</b> kaufen, in der <b>Bonusstadt</b> craften, in der <b>besten Königsstadt</b> verkaufen. Nur blaue/gelbe Zonen – du kannst nichts verlieren."
       : "Ausrüstung an den <b>Black Market</b> (Caerleon). Mehr Gewinn, aber Transport durch die <b>rote Zone</b>.";
     const mini = (box, values, list, label) => {
       box.innerHTML = "";
@@ -776,7 +815,15 @@
 
   function evWhere(ev) {
     const transport = ev.sellLoc === C.BLACK_MARKET && ev.city !== "Caerleon";
-    return { text: `Craften & kaufen in ${ev.city} → Sofortverkauf ${ev.sellLoc === C.BLACK_MARKET ? "an Black Market" : "in " + ev.sellLoc}`, transport };
+    const how = ev.sellMode === "order" ? "Verkaufsauftrag" : "Sofortverkauf";
+    const to = ev.sellLoc === C.BLACK_MARKET ? "an Black Market" : "in " + ev.sellLoc;
+    const moves = ev.buyCity !== ev.city || (ev.sellLoc !== ev.city && ev.sellLoc !== C.BLACK_MARKET);
+    const sellHere = ev.sellLoc === ev.city;
+    const text = !moves ? `Kaufen, craften & ${how} in ${ev.city}` + (ev.sellLoc === C.BLACK_MARKET ? " → Black Market" : "")
+      : ev.buyCity === ev.city ? `Kaufen & craften in ${ev.city} → ${how} ${to}`
+      : sellHere ? `Kaufen in ${ev.buyCity} → craften & ${how} in ${ev.city}`
+      : `Kaufen in ${ev.buyCity} → craften in ${ev.city} → ${how} ${to}`;
+    return { text, transport, safeMove: moves && !transport };
   }
 
   function silverChains(ev, crafts) {
@@ -804,7 +851,7 @@
       el("div", { class: "h" },
         el("div", { class: "name" }, (isPlan || p.pieces ? `${S(p.pieces)} × ` : "") + gd.label(ev.id)),
         el("div", { class: "profit num pos" }, isPlan ? S(p.profit) : (p.perDay ? S(p.perDay) + "/Tag" : S(ev.profit)))),
-      el("div", { class: "where" }, w.text, w.transport ? el("span", { class: "warn" }, "  🐎 Transport durch rote Zone") : null),
+      el("div", { class: "where" }, w.text, w.transport ? el("span", { class: "warn" }, "  🐎 Transport durch rote Zone") : w.safeMove ? el("span", { class: "muted" }, "  🛡 nur blaue/gelbe Zonen") : null),
       el("div", { class: "facts" },
         isPlan ? fact("Einkauf", S(p.cost)) : fact("Gewinn/Craft", S(ev.profit), "pos"),
         fact("Marge", C.fmtNum(ev.margin) + " %", "pos"),
@@ -824,7 +871,7 @@
       el("div", { class: "h" },
         el("div", { class: "name" }, `${S(m.pieces)} × ${gd.label(ev.id)}`),
         el("div", { class: "profit num pos" }, "+" + S(m.profit))),
-      el("div", { class: "where" }, w.text, w.transport ? el("span", { class: "warn" }, "  🐎 Transport durch rote Zone") : null),
+      el("div", { class: "where" }, w.text, w.transport ? el("span", { class: "warn" }, "  🐎 Transport durch rote Zone") : w.safeMove ? el("span", { class: "muted" }, "  🛡 nur blaue/gelbe Zonen") : null),
       el("div", { class: "facts" },
         fact("Silber/Fokus", C.fmtNum(m.spf, m.spf < 10 ? 2 : 1), "pos"),
         fact("Fokus", S(m.focusUsed)),
@@ -861,7 +908,9 @@
       (st.noPrice || st.loss || st.lowMargin || st.noVolume ? `<details class="why"><summary>Warum nicht mehr?</summary>` +
         `${S(st.noPrice || 0)} ohne aktuelle Preise (älter als ${ui.sAge} Std.) · ${S(st.loss || 0)} machen Verlust · ` +
         `${S(st.lowMargin || 0)} unter ${ui.sMargin} % Marge · ${S(st.noVolume || 0)} ohne Verkaufszahlen (nicht im Plan, aber unten gelistet)` +
-        `<br>Mehr finden: ${ui.sCity !== "auto" ? "<b>Stadt auf „Beste Stadt je Item“ stellen</b> (gerade nur " + ui.sCity + "), " : ""}` +
+        `<br>Mehr finden: ${(ui.sSellMode || "instant") === "instant" ? "<b>Verkauf per Verkaufsauftrag</b> (Sofortverkauf bringt fast nie Gewinn), " : ""}` +
+        `${ui.sMode === "safe" ? "<b>🗺 Städte-Route</b> wählen (Material dort kaufen, wo es billig ist), " : ""}` +
+        `${ui.sCity !== "auto" ? "<b>Stadt auf „Beste Stadt je Item“ stellen</b> (gerade nur " + ui.sCity + "), " : ""}` +
         `${!(Number(ui.sFocus) > 0) ? "<b>Fokus eintragen</b>, " : ""}alle Gruppen wählen, Preisalter erhöhen, Marge senken – oder unten die Liste „Mit Aufträgen“ ansehen.</details>` : "");
     if (!P.length) {
       plan.append(el("div", { class: "empty" }, "Gerade nichts, das alle Sicherheitsregeln erfüllt. Tipp: Mindest-Marge senken, mehr Gruppen/Tiers wählen, „Ganze Kette“ einschalten oder Fokus eintragen."));
@@ -912,12 +961,12 @@
     const ev = p.ev;
     if (ev.alch) {
       Object.assign(ui, { aKind: ev.rec.cat === "food" ? "food" : "potion", aBase: ev.id.split("@")[0], aEnch: ev.rec.ench, aInput: "qty",
-        aQty: p.pieces || ev.rec.amount, aCity: ev.city, aBuy: C.SAME_CITY, aBuyMode: ev.buyMode, aSell: ev.sellLoc, aSellMode: ev.sellMode, aFocus: ev.focus });
+        aQty: p.pieces || ev.rec.amount, aCity: ev.city, aBuy: ev.buyCity && ev.buyCity !== ev.city ? ev.buyCity : C.SAME_CITY, aBuyMode: ev.buyMode, aSell: ev.sellLoc, aSellMode: ev.sellMode, aFocus: ev.focus });
       saveUi(); show("alch"); return;
     }
     Object.assign(ui, {
       cItem: ev.id, cQty: p.pieces || ev.rec.amount * Math.max(1, Math.floor((ev.per_day || ev.rec.amount) / ev.rec.amount)),
-      cCity: ev.city, cBuy: C.SAME_CITY, cBuyMode: ev.buyMode, cSell: ev.sellLoc, cSellMode: ev.sellMode,
+      cCity: ev.city, cBuy: ev.buyCity && ev.buyCity !== ev.city ? ev.buyCity : C.SAME_CITY, cBuyMode: ev.buyMode, cSell: ev.sellLoc, cSellMode: ev.sellMode,
       cFocus: ev.focus, cDaily: 0, cGroup: ev.rec.group,
     });
     saveUi();

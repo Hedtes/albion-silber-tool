@@ -13,7 +13,7 @@
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="icon" type="image/png" href="icons/icon-64.png">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="stylesheet" href="style.css?v=2.2.0">
+<link rel="stylesheet" href="style.css?v=2.3.0">
 </head>
 <body>
 <header class="top">
@@ -26,7 +26,8 @@
   <!-- ===================================================== Silber-Finder -->
   <section class="view" id="view-silver">
     <div class="seg" id="s-mode" style="margin-bottom:8px">
-      <button data-m="safe">🛡 100 % sicher</button>
+      <button data-m="route">🗺 Städte-Route</button>
+      <button data-m="safe">🛡 1 Stadt</button>
       <button data-m="bm">🐎 mit Black Market</button>
       <button data-m="cl">🏰 Caerleon</button>
     </div>
@@ -53,8 +54,6 @@
       </div>
       <div class="tiles" id="cl-tiles"></div>
       <div id="cl-list"></div>
-        <div class="small muted">Deine Scans landen nur in diesem Browser. Mit <code>-i noop</code> schickt der Client nichts an die öffentliche Datenbank – andere sehen deine Daten nicht. Am Handy kommen die Live-Daten nicht an (Browser erlauben die Verbindung nur am selben PC).</div>
-      </details>
     </div>
     <div id="s-main">
     <div class="muted small hint" id="s-mode-info" style="margin:0 2px 10px"></div>
@@ -83,7 +82,7 @@
           <div class="field"><label>Material kaufen per</label><select id="s-buymode">
             <option value="instant">Sofortkauf (sofort)</option><option value="order">Kaufauftrag (günstiger, dauert)</option></select></div>
           <div class="field"><label>Verkauf per</label><select id="s-sellmode">
-            <option value="instant">Sofortverkauf (sicher)</option><option value="order">Verkaufsauftrag (mehr, dauert)</option></select></div>
+            <option value="order">Verkaufsauftrag (normal beim Craften)</option><option value="instant">Sofortverkauf ans Kaufgebot (selten Gewinn)</option></select></div>
           <div class="field"><label>Mindest-Marge %</label><input id="s-margin" type="number" inputmode="decimal" value="10"></div>
           <div class="field"><label>Menge = Verkäufe von … Tagen</label><input id="s-days" type="number" inputmode="decimal" value="1"></div>
           <div class="field"><label>Max. Anteil am Markt % <span class="muted small">(von den Verkäufen/Tag)</span></label><input id="s-share" type="number" inputmode="decimal" value="20"></div>
@@ -547,7 +546,7 @@
 <div class="toast note" id="note"><span id="note-text"></span><button id="note-btn">Ansehen</button></div>
 <div class="toast" id="toast"><span id="toast-text"></span><button id="toast-btn">Neu laden</button></div>
 
-<script src="core.js?v=2.2.0"></script>
-<script src="app.js?v=2.2.0"></script>
+<script src="core.js?v=2.3.0"></script>
+<script src="app.js?v=2.3.0"></script>
 </body>
 </html>

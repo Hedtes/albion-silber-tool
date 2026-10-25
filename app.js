@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const C = window.Core;
-  const VERSION = "2.3.0";
+  const VERSION = "2.4.0";
   const $ = (id) => document.getElementById(id);
   const S = C.fmtSilver;
   const SLOW_DAYS = 7;
@@ -2614,42 +2614,80 @@
   }
 
   // ------------------------------------------------------------ Profitabelste Tränke / Essen
+  // Eigener Scanner: prüft jede Sorte/Stufe auf allen sicheren Wegen (Material in jeder Königsstadt,
+  // Verkauf in der besten Königsstadt, Bonusstadt vor Ort), ohne und mit Fokus, Menge passend zum Markt.
   let abResult = null;
   function abVariants() {
     return Object.keys(gd.recipes).filter((id) => gd.recipes[id].cat === aCat() && gd.recipes[id].ench === 0)
       .flatMap((b) => aVariants(b));
   }
+  function abCombos(id) {
+    const rec = gd.recipes[id], R = C.ROYAL_CITIES;
+    const bonus = C.bonusCityFor(settings, rec.cat);
+    const out = R.map((b) => ({ city: b, buyCity: b, sellLocs: R, risk: "" }));
+    if (bonus && !R.includes(bonus)) {
+      out.push({ city: bonus, buyCity: bonus, sellLocs: [bonus], risk: bonus === "Caerleon" ? "cl" : "" });
+      if (ui.abRoute === "all") R.forEach((b) => out.push({ city: bonus, buyCity: b, sellLocs: [bonus].concat(R), risk: bonus === "Caerleon" ? "red" : "mist" }));
+    }
+    return out;
+  }
+  const abLocs = () => { const b = C.bonusCityFor(settings, aCat()); return C.ROYAL_CITIES.concat(b && !C.ROYAL_CITIES.includes(b) ? [b] : []); };
   function abEvaluate() {
     const out = [];
+    const F = myFocus();
     for (const v of abVariants()) {
-      const o = aOpts(v);
       const rec = gd.recipes[v];
-      const pieces = Math.max(ui.aInput === "budget" ? 0 : aQty(), rec.amount);
-      let plan;
+      let best = null;
+      for (const cb of abCombos(v)) {
+        const o = { city: cb.city, buyCity: cb.buyCity, buyMode: ui.aBuyMode, maxAge: settings.max_age_hours, alts: alchData.alts,
+          focus: false, daily: 0, sellLocs: cb.sellLocs, sellMode: ui.aSellMode, stock: {}, focusAvail: F, fce: Number(ui.sFce) || 0,
+          buyOnly: false, station: Math.max(0, Number(ui.aStation) || 0) };
+        const pl = C.cheapPlan(gd, store, settings, v, rec.amount * 10, o);
+        if (!pl || !pl.complete) continue;
+        const per = pl.res.profit / pl.pieces;
+        const mv = (cb.buyCity !== cb.city ? 1 : 0) + (pl.best.loc !== cb.city ? 1 : 0);
+        const score = per - Math.abs(per) * 0.04 * mv;
+        if (!best || score > best.score) best = { o, pl, score, risk: cb.risk };
+      }
+      if (!best) continue;
+      const info = best.pl.best.info || {};
+      const pd = info.per_day === undefined ? null : info.per_day;
+      const cap = pd === null ? null : C.capByVolume(pd, 1, sShare(), rec.amount) * rec.amount;
+      let want;
       if (ui.aInput === "budget") {
-        const pc = aPieces(v, o);
-        if (!pc.pieces) continue;
-        plan = C.cheapPlan(gd, store, settings, v, Math.max(pc.pieces, rec.amount), o);
-      } else plan = C.cheapPlan(gd, store, settings, v, pieces, o);
-      if (!plan.complete) continue;
-      out.push({ id: v, plan, o, profit: plan.res.profit, each: plan.res.profit / plan.pieces, margin: plan.res.margin,
-        vol: plan.best && plan.best.info ? plan.best.info.per_day : null, loc: plan.best ? plan.best.loc : o.sellLocs[0] });
+        const unit = best.pl.buyCost && best.pl.pieces ? best.pl.buyCost / best.pl.pieces : null;
+        want = unit ? Math.floor(aBudget() / unit) : rec.amount * 10;
+      } else want = aQty();
+      const pieces = Math.max(rec.amount, cap === null ? want : Math.min(want, cap));
+      const nf = C.cheapPlan(gd, store, settings, v, pieces, best.o);
+      const f = F > 0 ? C.cheapPlan(gd, store, settings, v, pieces, Object.assign({}, best.o, { focus: true })) : null;
+      if (!nf || !nf.complete) continue;
+      const fOk = f && f.complete && f.focusNeed > 0;
+      const spf = fOk ? (f.res.profit - nf.res.profit) / f.focusNeed : null;
+      out.push({ id: v, o: best.o, nf, f: fOk ? f : null, spf, vol: pd, cap, want, risk: best.risk, loc: nf.best.loc,
+        profit: Math.max(nf.res.profit, fOk ? f.res.profit : -Infinity) });
     }
-    return out.sort((a, b) => b.profit - a.profit);
+    return out;
   }
   function abRun() {
     const vs = abVariants();
     const bases = [...new Set(vs.map((v) => v.split("@")[0]))];
-    const buy = new Set(), sell = new Set();
-    vs.forEach((v) => { const o = aOpts(v); buy.add(o.buyCity); o.sellLocs.forEach((l) => sell.add(l)); });
+    const locs = abLocs();
     const items = alchItemsToLoad(vs);
-    runJobs([[items, [...buy]], [vs, [...sell]]], async () => {
-      const top = abEvaluate().filter((x) => x.profit > 0).slice(0, 30);
-      const hist = [...new Set(top.map((x) => x.id))];
-      if (hist.length) await runJobs([[hist, [...new Set(top.map((x) => x.loc))], "history"]], () => abRender());
-      else abRender();
+    $("ab-list").innerHTML = `<div class="small muted" style="margin-top:6px">Prüfe ${vs.length} Sorten/Stufen aus ${bases.length} Rezepten in ${locs.length} Städten …</div>`;
+    runJobs([[[...new Set(items.concat(vs))], locs]], async () => {
+      // Verkaufszahlen für alle, die Gewinn machen könnten – in jeder Stadt, in der man verkaufen kann
+      const pre = abEvaluate().filter((x) => x.profit > 0 || (x.f && x.f.res.profit > 0)).sort((a, b) => b.profit - a.profit).slice(0, 60);
+      const hist = [...new Set(pre.map((x) => x.id))];
+      const done = () => { abResult = { kind: aCat(), items: abEvaluate(), at: Date.now() }; abRender(); };
+      if (hist.length) { busy = false; await runJobs([[hist, locs, "history"]], done); } else done();
     });
-    $("ab-list").innerHTML = `<div class="small muted" style="margin-top:6px">Prüfe ${vs.length} Sorten/Stufen aus ${bases.length} Rezepten …</div>`;
+  }
+  function abWhere(x) {
+    const o = x.o, loc = x.loc, how = ui.aSellMode === "order" ? "Verkaufsauftrag" : "Sofortverkauf";
+    if (o.buyCity === o.city && loc === o.city) return `Alles in ${o.city} · ${how}`;
+    if (o.buyCity === o.city) return `Kaufen & brauen in ${o.city} → ${how} in ${loc}`;
+    return `Kaufen in ${o.buyCity} → brauen in ${o.city} → ${how} in ${loc}`;
   }
   function abRender() {
     const box = $("ab-list");
@@ -2657,31 +2695,43 @@
     const food = aCat() === "food";
     $("ab-title").textContent = food ? "🏆 Profitabelstes Essen" : "🏆 Profitabelste Tränke";
     if (document.activeElement !== $("ab-vol")) $("ab-vol").value = ui.abVol === undefined ? 5 : ui.abVol;
+    $("ab-route").value = ui.abRoute || "safe"; $("ab-sort").value = ui.abSort || "profit";
     box.innerHTML = "";
-    const all = abEvaluate();
-    if (!all.length) { box.append(el("div", { class: "small muted", style: "margin-top:6px" }, "Noch keine Preise – „🔍 Suchen“ tippen.")); return; }
+    if (!abResult || abResult.kind !== aCat()) { box.append(el("div", { class: "small muted", style: "margin-top:6px" }, "„🔍 Suchen“ tippen – prüft alle Sorten in allen Städten.")); return; }
+    const all = abResult.items;
     const minVol = ui.abVol === undefined ? 5 : Number(ui.abVol) || 0;
-    const list = all.filter((x) => x.profit > 0 && (x.vol === null || x.vol === undefined || x.vol >= minVol)).slice(0, 15);
-    const qtyTxt = ui.aInput === "budget" ? `Budget ${S(aBudget())} Silber` : `${S(aQty())} Stück`;
+    const useF = (x) => x.f && x.f.res.profit > x.nf.res.profit;
+    const key = ui.abSort === "focus" ? (x) => (x.spf === null ? -Infinity : x.spf) : ui.abSort === "piece" ? (x) => x.profit / x.nf.pieces : (x) => x.profit;
+    const list = all.filter((x) => x.profit > 0 && (x.vol === null || x.vol >= minVol) && (ui.abSort !== "focus" || (x.spf !== null && x.spf > 0)))
+      .sort((a, b) => key(b) - key(a)).slice(0, 20);
+    const age = Math.round((Date.now() - abResult.at) / 60000);
+    const qtyTxt = ui.aInput === "budget" ? `Budget ${S(aBudget())}` : `max. ${S(aQty())} Stück`;
     box.append(el("div", { class: "small muted", style: "margin:6px 0 2px" },
-      list.length ? `Top ${list.length} von ${all.length} geprüften · gerechnet für ${qtyTxt} · antippen = im Rechner öffnen` :
-        `Von ${all.length} geprüften ist gerade nichts im Plus (mit mind. ${minVol} Verkäufen/Tag). Filter senken oder Städte im Rechner ändern.`));
+      list.length ? `Top ${list.length} von ${all.length} · ${qtyTxt}, aber höchstens ${C.fmtNum(sShare() * 100)} % der Verkäufe/Tag · vor ${age} min · antippen = im Rechner öffnen` :
+        `Von ${all.length} geprüften ist gerade nichts im Plus (mit mind. ${minVol} Verkäufen/Tag). „Mind. Verkäufe/Tag“ senken oder Verkauf per Verkaufsauftrag wählen.`));
     list.forEach((x, i) => {
-      const volTxt = x.vol === null || x.vol === undefined ? "Verkäufe/Tag ?" : `${C.fmtNum(x.vol, x.vol < 10 ? 1 : 0)} Verkäufe/Tag`;
-      const warn = x.vol !== null && x.vol !== undefined && x.plan.pieces > x.vol * 3;
+      const fx = useF(x), pl = fx ? x.f : x.nf;
+      const volTxt = x.vol === null ? "Verkäufe/Tag ?" : `${C.fmtNum(x.vol, x.vol < 10 ? 1 : 0)} Verkäufe/Tag`;
+      const limited = x.cap !== null && x.cap < x.want;
+      const fTxt = x.f ? ` · mit Fokus ${x.f.res.profit >= 0 ? "+" : ""}${S(x.f.res.profit)} (${C.fmtNum(x.spf, Math.abs(x.spf) < 10 ? 2 : 1)} Silber/Fokus, ${S(x.f.focusNeed)} Fokus)` : "";
       box.append(el("div", { class: "shop-item", style: "cursor:pointer;align-items:flex-start" },
         el("div", { class: "rank" }, String(i + 1)),
-        el("div", { class: "t", on: { click: () => abOpen(x) } },
+        el("div", { class: "t", on: { click: () => abOpen(x, fx) } },
           el("div", { style: "font-weight:700" }, gd.label(x.id)),
-          el("div", { class: "small muted" }, `${S(x.plan.pieces)} Stk · Einkauf ${S(x.plan.buyCost)} · Verkauf ${x.loc} ${S(x.plan.best ? x.plan.best.price : null)}`),
-          el("div", { class: "small" + (warn ? " neg" : "") }, `${S(x.each)} pro Stück · Marge ${C.fmtNum(x.margin)} % · ${volTxt}` + (warn ? " · Menge evtl. zu groß für den Markt" : ""))),
-        el("div", { style: "text-align:right", on: { click: () => abOpen(x) } },
-          el("div", { class: "pos num", style: "font-weight:800" }, `+${S(x.profit)}`)),
-        el("button", { class: "icon-btn", title: "Als Rezept speichern", on: { click: () => saveRecipe(projectFromAlch(x.id, x.o, x.plan)) } }, "📝")));
+          el("div", { class: "small" }, abWhere(x), x.risk === "red" ? el("span", { class: "warn" }, " 🐎 rote Zone") : x.risk === "mist" ? el("span", { class: "warn" }, " 🌫 Nebel") : x.risk === "cl" ? el("span", { class: "muted" }, " 🏰 Hinweg durch rote Zone, ohne Ware") : null),
+          el("div", { class: "small muted" }, `${S(pl.pieces)} Stk${limited ? " (Markt-Grenze)" : ""} · Einkauf ${S(pl.buyCost)} · Verkauf ${S(pl.best.price)} · ${volTxt}`),
+          el("div", { class: "small" }, `ohne Fokus ${x.nf.res.profit >= 0 ? "+" : ""}${S(x.nf.res.profit)} · Marge ${C.fmtNum(x.nf.res.margin)} %` + fTxt)),
+        el("div", { style: "text-align:right", on: { click: () => abOpen(x, fx) } },
+          el("div", { class: "pos num", style: "font-weight:800" }, `+${S(x.profit)}`),
+          el("div", { class: "small muted" }, fx ? "✦ Fokus" : "")),
+        el("button", { class: "icon-btn", title: "Als Rezept speichern", on: { click: () => saveRecipe(projectFromAlch(x.id, Object.assign({}, x.o, { focus: fx }), pl)) } }, "📝")));
     });
   }
-  function abOpen(x) {
-    ui.aBase = x.id.split("@")[0]; ui.aEnch = gd.recipes[x.id].ench; saveUi();
+  function abOpen(x, withFocus) {
+    const pl = withFocus ? x.f : x.nf;
+    Object.assign(ui, { aBase: x.id.split("@")[0], aEnch: gd.recipes[x.id].ench, aInput: "qty", aQty: pl.pieces, aCity: x.o.city,
+      aBuy: x.o.buyCity === x.o.city ? C.SAME_CITY : x.o.buyCity, aSell: x.loc, aFocus: !!withFocus });
+    saveUi();
     renderAlchSearch(); renderAlch();
     $("a-calc").scrollIntoView({ behavior: "smooth", block: "start" });
   }
@@ -3149,6 +3199,8 @@
     }));
     $("ab-run").addEventListener("click", abRun);
     $("ab-vol").addEventListener("change", (e) => { ui.abVol = Number(e.target.value) || 0; saveUi(); abRender(); });
+    $("ab-route").addEventListener("change", (e) => { ui.abRoute = e.target.value; saveUi(); abResult = null; abRender(); });
+    $("ab-sort").addEventListener("change", (e) => { ui.abSort = e.target.value; saveUi(); abRender(); });
     let at = null;
     $("a-search").addEventListener("input", () => { clearTimeout(at); at = setTimeout(renderAlchSearch, 150); });
     const aq = $("a-qty");
